@@ -39,8 +39,10 @@ def load_allocation(path: Path, cfg: dict, month: str) -> pd.DataFrame:
         df[c] = df[c].map(nfkc)
     df["ratio"] = pd.to_numeric(df["ratio"].map(nfkc), errors="coerce")
     df["month"] = df["month"].str[:7]
-    df = df[(df["month"] == month) | (df["month"] == "")]
-    return df.reset_index(drop=True)
+    months_in_file = sorted(m for m in df["month"].unique() if m)
+    df = df[(df["month"] == month) | (df["month"] == "")].reset_index(drop=True)
+    df.attrs["months_in_file"] = months_in_file  # 対象月の行が無いときの案内に使う
+    return df
 
 
 def allocate(cards: pd.DataFrame, alloc: pd.DataFrame, facilities: pd.DataFrame, cfg: dict,
@@ -68,7 +70,11 @@ def allocate(cards: pd.DataFrame, alloc: pd.DataFrame, facilities: pd.DataFrame,
             plan = alloc[alloc["employee_no"] == emp]
             src = "按分資料"
         if plan.empty:
-            issues.append(Issue("A001", f"社員番号 {emp} が給与按分資料にありません", card_no=c["card_no"],
+            detail = f"社員番号 {emp} が給与按分資料にありません"
+            if alloc.empty and alloc.attrs.get("months_in_file"):
+                detail += ("（給与按分資料に対象月の行がありません。資料にある月: "
+                           + "・".join(alloc.attrs["months_in_file"]) + "。資料の「対象月」を確認してください）")
+            issues.append(Issue("A001", detail, card_no=c["card_no"],
                                 user=c["user_name"], amount=c["amount"], ref={"employee_no": emp}))
             continue
         bad = [fc for fc in plan["facility_code"] if fc not in fac_codes]

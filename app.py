@@ -144,8 +144,41 @@ def require_login() -> dict:
 # =============================================================================
 # 集計ページ（管理者・担当者）
 # =============================================================================
+UPLOAD_KINDS = {  # 種類: (ラベル, 拡張子, ファイル名の頭, 中身の先頭バイト)
+    "pdf": ("利用明細（PDF）", "pdf", "利用明細_", b"%PDF-"),
+    "ledger": ("管理台帳（Excel）", "xlsx", "管理台帳_", b"PK"),
+    "alloc": ("給与按分資料（Excel）", "xlsx", "給与按分_", b"PK"),
+}
+DEMO_MAX_BYTES = 10 * 1024 * 1024
+
+
+def workspace_cfg() -> dict:
+    """公開デモでは、人（セッション）ごとに専用の作業フォルダを使う。他の人のファイルや修正と混ざらない"""
+    if not demo.enabled():
+        return cfg
+    import copy
+    import shutil
+    sid = st.session_state.setdefault("sid", _secrets.token_hex(8))
+    base = ROOT / "data" / "demo_sessions"
+    if not st.session_state.get("demo_cleaned"):  # 1日以上前の作業フォルダを消す
+        cutoff = datetime.now().timestamp() - 86400
+        for d in base.glob("*") if base.exists() else []:
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+        st.session_state.demo_cleaned = True
+    w = copy.deepcopy(cfg)
+    for key in ("input_dir", "output_dir", "corrections_dir"):  # ログ（AIの再利用・回数上限）は全員で共有
+        w["paths"][key] = str(base / sid / key)
+    for month, folder in demo.SAMPLES.items():
+        dst = Path(w["paths"]["input_dir"]) / month
+        if not dst.exists():
+            shutil.copytree(ROOT / "入力ファイル見本" / folder, dst)
+    return w
+
+
 def page_aggregate(user: dict) -> None:
     who = f"{user['display_name']}（{user['username']}）"
+    cfg = workspace_cfg()
 
     def months_available() -> list[str]:
         d = ROOT / cfg["paths"]["input_dir"]
@@ -181,31 +214,48 @@ def page_aggregate(user: dict) -> None:
         else:
             st.caption("🔑 APIキー: 設定済み")
 
-        if demo.enabled():
-            st.caption("📁 デモでは架空データ（2026-10：エラー入り／2026-11：エラーなし）を使います。"
-                       "ファイルのアップロードはできません。")
-        else:
-          with st.expander("入力ファイルを置く"):
+        with st.expander("入力ファイルを置く", expanded=demo.enabled()):
+            if demo.enabled():
+                st.warning("公開デモです。実際の明細や個人情報を含むファイルは上げないでください。"
+                           "上げたファイルはあなた専用の場所に置かれ、1日で自動的に消えます。（1ファイル10MBまで）")
+                with st.popover("試せるサンプルファイル"):
+                    for sm, folder in demo.SAMPLES.items():
+                        st.caption(f"{sm}（{'エラー入り' if sm == '2026-10' else 'エラーなし'}）")
+                        for f in sorted((ROOT / "入力ファイル見本" / folder).iterdir()):
+                            st.download_button(f"⬇ {f.name}", f.read_bytes(), file_name=f.name, key=f"smp{f.name}")
             in_dir = ROOT / cfg["paths"]["input_dir"] / month
-            ups = {
-                "利用明細PDF": st.file_uploader("利用明細（PDF）", type="pdf"),
-                "管理台帳": st.file_uploader("管理台帳（Excel）", type="xlsx"),
-                "給与按分資料": st.file_uploader("給与按分資料（Excel）", type="xlsx"),
-            }
-            prefix = {"利用明細PDF": "利用明細_", "管理台帳": "管理台帳_", "給与按分資料": "給与按分_"}
+            ups = {k: st.file_uploader(v[0], type=v[1], key=f"up_{k}") for k, v in UPLOAD_KINDS.items()}
             if st.button("保存する", disabled=not any(ups.values())):
-                in_dir.mkdir(parents=True, exist_ok=True)
-                saved = []
-                for label, f in ups.items():
-                    if f:
+                problems = []
+                for k, f in ups.items():
+                    data = f.getvalue() if f else b""
+                    if f and not data.startswith(UPLOAD_KINDS[k][3]):
+                        problems.append(f"{f.name} は{UPLOAD_KINDS[k][0]}のファイルではありません")
+                    elif f and demo.enabled() and len(data) > DEMO_MAX_BYTES:
+                        problems.append(f"{f.name} が大きすぎます（デモは10MBまで）")
+                if problems:
+                    st.error("保存しませんでした：" + " ／ ".join(problems))
+                else:
+                    in_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    saved = []
+                    for k, f in ups.items():
+                        if not f:
+                            continue
+                        _, ext, prefix, _ = UPLOAD_KINDS[k]
+                        # 同じ種類の古いファイルは「置き換え前」へ移す（古い方を読んでしまわないように）
+                        for old in in_dir.glob(f"{prefix}*.{ext}"):
+                            bk = in_dir / "置き換え前" / stamp
+                            bk.mkdir(parents=True, exist_ok=True)
+                            old.rename(bk / old.name)
                         name = Path(f.name).name
-                        name = name if name.startswith(prefix[label]) else prefix[label] + name
-                        (in_dir / name).write_bytes(f.getbuffer())
+                        name = name if name.startswith(prefix) else prefix + name
+                        (in_dir / name).write_bytes(f.getvalue())
                         saved.append(name)
-                db.log(user["username"], "ファイル保存", f"{month} {', '.join(saved)}")
-                st.success(f"{in_dir} に保存しました")
+                    db.log(user["username"], "ファイル保存", f"{month} {', '.join(saved)}")
+                    st.success("保存しました。「実行」を押すと、このファイルで集計します。")
             if in_dir.exists():
-                st.caption("現在のファイル: " + ", ".join(p.name for p in sorted(in_dir.iterdir())))
+                st.caption("現在のファイル: " + ", ".join(p.name for p in sorted(in_dir.iterdir()) if p.is_file()))
 
         if st.button("▶ 実行（再集計）", type="primary", width="stretch"):
             execute(month, use_ai)
@@ -340,11 +390,13 @@ def page_aggregate(user: dict) -> None:
         if res.can_export:
             st.subheader("CSVプレビュー")
             st.dataframe(res.journal, width="stretch", hide_index=True)
-        st.caption(f"出力先フォルダ: {ROOT / cfg['paths']['output_dir'] / month}")
+        if not demo.enabled():
+            st.caption(f"出力先フォルダ: {ROOT / cfg['paths']['output_dir'] / month}")
 
     with tabs[6]:
         corr = load_corrections(cfg, month)
-        st.caption(f"修正ファイル: {corrections_path(cfg, month)}")
+        if not demo.enabled():
+            st.caption(f"修正ファイル: {corrections_path(cfg, month)}")
         for kind, label in [("pdf_overrides", "金額の補正"), ("card_overrides", "カード情報の補正"),
                             ("alloc_overrides", "按分の補正")]:
             st.markdown(f"**{label}**")

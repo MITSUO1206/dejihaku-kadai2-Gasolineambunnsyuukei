@@ -139,6 +139,17 @@ def test_ai_failure_falls_back(env):
     assert "error" in res.statement.ai_log[0]
 
 
+def test_allocation_month_mismatch_is_explained(env):
+    cfg, _ = env
+    src = Path(cfg["paths"]["input_dir"]) / MONTH
+    other = Path(cfg["paths"]["input_dir"]) / "2026-12"
+    import shutil
+    shutil.copytree(src, other)  # 10月の按分資料のまま12月として実行
+    res = run("2026-12", cfg, use_ai=False, write=False)
+    a001 = [i for i in res.issues if i.code == "A001"]
+    assert a001 and all("対象月の行がありません" in i.detail and "2026-10" in i.detail for i in a001)
+
+
 def test_ai_cache_avoids_second_api_call(env):
     cfg, data = env
     calls = []
