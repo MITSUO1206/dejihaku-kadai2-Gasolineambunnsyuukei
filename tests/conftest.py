@@ -9,7 +9,8 @@ from src import db  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def temp_db(tmp_path):
+def temp_db(tmp_path, monkeypatch):
+    monkeypatch.setenv("GASCARD_DEMO", "0")  # 通常（実データ用）モードでテストする
     original = db.db_path()
     db.set_path(tmp_path / "test.db")
     yield

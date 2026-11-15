@@ -57,12 +57,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 架空データだけで触れるデモとして公開できます。**実データは公開環境に置かないでください。**
 
 1. https://share.streamlit.io に GitHub アカウントでログイン →「Create app」
-2. リポジトリ・ブランチ `main`・Main file `app.py` を選び、Advanced settings で Python 3.11 を選ぶ
-3. Secrets に次を貼り付けて Deploy
+2. リポジトリ・ブランチ `main`・Main file `app.py` を選び、Advanced settings で Python 3.11 を選んで Deploy
 
-```toml
-GASCARD_DEMO = "1"
-```
+**何も設定しなければデモモードで動きます**（安全側の既定値）。社内で実データを扱うときは `start.bat` で起動してください（`GASCARD_DEMO=0` を設定して起動します）。
 
 デモモードでは：デモ用アカウント（demo_admin / demo_staff / demo_viewer、パスワード demo1234）が自動で作られ、
 ファイルのアップロードとAI読取補助は無効、デモ用アカウントは変更・ロックできません。

@@ -168,6 +168,17 @@ def test_audit_log_records_run_and_corrections(two_months):
     assert "集計実行" in acts and "修正" in acts
 
 
+def test_demo_mode_is_default_and_protects_demo_accounts(monkeypatch):
+    from src import demo
+    monkeypatch.delenv("GASCARD_DEMO", raising=False)
+    assert demo.enabled()  # 何も設定しなければデモモード（安全側）
+    demo.seed(load_config())
+    with pytest.raises(auth.AuthError):
+        auth.set_active("demo_admin", False, by="x")
+    monkeypatch.setenv("GASCARD_DEMO", "0")
+    assert not demo.enabled()
+
+
 @pytest.mark.parametrize("bad", ["../../etc", "2026-13", "2026-1", "2026-10/../x", ""])
 def test_month_path_traversal_rejected(bad):
     from src.pipeline import check_month, corrections_path
