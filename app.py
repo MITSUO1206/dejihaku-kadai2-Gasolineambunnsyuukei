@@ -142,14 +142,39 @@ def require_login() -> dict:
 
 
 # =============================================================================
-# 集計ページ（管理者・担当者）
+# 集計ページ（管理者・担当者）：① ファイルを置く → ② 実行 → ③ エラーを直す → ④ CSVを出す
 # =============================================================================
-UPLOAD_KINDS = {  # 種類: (ラベル, 拡張子, ファイル名の頭, 中身の先頭バイト)
-    "pdf": ("利用明細（PDF）", "pdf", "利用明細_", b"%PDF-"),
-    "ledger": ("管理台帳（Excel）", "xlsx", "管理台帳_", b"PK"),
-    "alloc": ("給与按分資料（Excel）", "xlsx", "給与按分_", b"PK"),
+UPLOAD_KINDS = {  # 種類: (名前, 拡張子, ファイル名の頭, 中身の先頭バイト, 説明)
+    "pdf": ("利用明細（PDF）", "pdf", "利用明細_", b"%PDF-", "カード会社から届いた、今月のご利用代金明細書"),
+    "ledger": ("管理台帳（Excel）", "xlsx", "管理台帳_", b"PK", "どのカードを、どの施設・誰が使っているかの一覧"),
+    "alloc": ("給与按分資料（Excel）", "xlsx", "給与按分_", b"PK", "AM・アドバイザーの費用を、どの施設に何%分けるか"),
 }
-DEMO_MAX_BYTES = 10 * 1024 * 1024
+STEPS = ["ファイルを置く", "集計を実行する", "エラーを直す", "CSVを出す"]
+
+# エラーを、経理担当者に伝わる言葉で（タイトル, 画面でやること）
+PLAIN = {
+    "L001": ("管理台帳に空欄があります", "このカードを使った施設を選んでください。"),
+    "L002": ("同じカードが管理台帳に2行あります", "管理台帳の有効期間を直して、ファイルを置き直してください。"),
+    "L003": ("管理台帳の施設コードが、施設一覧にありません", "このカードを使った施設を選び直してください。"),
+    "L004": ("管理台帳の「区分」が正しくありません", "このカードの区分と施設を選んでください。"),
+    "P001": ("明細PDFの金額が読み取れませんでした", "PDFの原本を見て、このカードの今月の利用金額を入力してください。"),
+    "P002": ("明細の合計と、カードの小計が合いません", "PDFの原本を見て、このカードの今月の利用金額を入力してください。"),
+    "P003": ("請求合計と、読み取った金額の合計が合いません", "明細PDFが正しいファイルか確認してください。直らない場合は管理者に連絡してください。"),
+    "P004": ("明細PDFに「ご請求合計金額」が見つかりません", "明細PDFが正しいファイルか確認してください。"),
+    "M001": ("管理台帳に登録されていないカードが使われています", "このカードを使った施設を選んでください。来月のために、管理台帳にも登録してください。"),
+    "M002": ("有効期間が切れたカードが使われています", "このカードを使った施設を選んでください。管理台帳の有効期間も確認してください。"),
+    "M003": ("カードの名義が、管理台帳と明細で違います", "管理台帳の名義が古くないか確認してください。集計はこのまま進められます。"),
+    "M004": ("AM・アドバイザーなのに社員番号がありません", "このカードの区分・施設・社員番号を入力してください。"),
+    "A001": ("按分の割合が登録されていない人がいます", "この人のガソリン代を、どの施設に何%ずつ分けるか入力してください（合計100%）。"),
+    "A002": ("按分の割合を足しても100%になりません", "割合を直して、合計を100%にしてください。"),
+    "A003": ("按分先の施設コードが、施設一覧にありません", "按分先の施設を選び直してください。"),
+    "P005": ("AIが読み取った金額があります", "念のため、PDFの原本と金額が合っているか見てください。集計はこのまま進められます。"),
+    "M005": ("今月使われなかったカードがあります", "対応は不要です（使っていないカードの確認用）。"),
+    "C001": ("合計が合いません", "システムの不具合の可能性があります。管理者に連絡してください。"),
+}
+CARD_FIX = ("M001", "M002", "L001", "L003", "L004", "M004")
+AMOUNT_FIX = ("P001", "P002")
+ALLOC_FIX = ("A001", "A002", "A003")
 
 
 def workspace_cfg() -> dict:
@@ -176,16 +201,51 @@ def workspace_cfg() -> dict:
     return w
 
 
+def stepper(current: int, done: set[int]) -> None:
+    cols = st.columns(len(STEPS))
+    for i, (col, name) in enumerate(zip(cols, STEPS), start=1):
+        if i in done:
+            col.success(f"✓ {i}. {name}")
+        elif i == current:
+            col.info(f"▶ {i}. {name}")
+        else:
+            col.container(border=True).caption(f"{i}. {name}")
+
+
 def page_aggregate(user: dict) -> None:
     who = f"{user['display_name']}（{user['username']}）"
     cfg = workspace_cfg()
+    input_root = ROOT / cfg["paths"]["input_dir"]
 
-    def months_available() -> list[str]:
-        d = ROOT / cfg["paths"]["input_dir"]
-        return sorted([p.name for p in d.iterdir() if p.is_dir()], reverse=True) if d.exists() else []
+    # ---- 対象月（選ぶだけ。新しい月は追加ボタンから） ----
+    st.title("毎月の集計")
+    months = sorted([p.name for p in input_root.iterdir() if p.is_dir()], reverse=True) if input_root.exists() else []
+    extra = st.session_state.get("new_months", [])
+    months = sorted(set(months) | set(extra), reverse=True) or [datetime.now().strftime("%Y-%m")]
+    if "_pending_month" in st.session_state:  # 「別の月を追加」で選んだ月を、選択欄を作る前に反映する
+        st.session_state.month = st.session_state.pop("_pending_month")
+    c1, c2 = st.columns([2, 3])
+    month = c1.selectbox("対象月（カードを使った月）", months, format_func=month_label, key="month")
+    with c2.popover("＋ 別の月を追加"):
+        nm = st.text_input("追加する月（例：2026-12）", key="new_month_input").strip()
+        if st.button("この月を追加する"):
+            if re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", nm):
+                st.session_state.new_months = sorted(set(extra) | {nm})
+                st.session_state._pending_month = nm
+                st.rerun()
+            else:
+                st.error("2026-12 のように「年4けた-月2けた」で入力してください")
 
-    def execute(month: str, use_ai: bool) -> None:
-        with st.spinner("照合・集計・按分を実行中…"):
+    in_dir = input_root / month
+    present = {k: sorted(in_dir.glob(f"{v[2]}*.{v[1]}")) for k, v in UPLOAD_KINDS.items()} if in_dir.exists() else \
+        {k: [] for k in UPLOAD_KINDS}
+    files_ok = all(present.values())
+    res = st.session_state.get("res")
+    if res is not None and res.month != month:
+        res = None
+
+    def execute(use_ai: bool) -> None:
+        with st.spinner("照合・集計・按分をしています…（30秒ほどかかることがあります）"):
             try:
                 st.session_state.res = run(month, cfg, use_ai=use_ai, user=user["username"])
                 st.session_state.run_error = None
@@ -194,47 +254,50 @@ def page_aggregate(user: dict) -> None:
                 st.session_state.run_error = str(e)
                 db.log(user["username"], "集計失敗", f"{month} {e}")
 
-    with st.sidebar:
-        st.divider()
-        existing = months_available()
-        month = st.text_input("対象月（利用月）", value=existing[0] if existing else "2026-10",
-                              help="YYYY-MM 形式。例: 2026-10").strip()
-        # フォルダ名に使うので、形式を厳密に確認する（../ などでフォルダ外に書き込ませない）
-        if not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", month):
-            st.error("対象月は 2026-10 のように YYYY-MM 形式で入力してください")
-            st.stop()
-        has_key = ai_key_configured()
-        use_ai = st.toggle("AI読取補助を使う", value=cfg["ai"]["enabled"] and has_key, disabled=not has_key,
-                           help="ルールで読めなかった明細行だけをClaude APIに送ります。カード番号・名義は送りません。")
-        if not has_key:
-            st.caption("🔑 APIキー未設定（AI読取補助は使えません）")
-        elif demo.enabled():
-            from src.ai_assist import daily_limit
-            st.caption(f"🔑 AI読取補助：同じ行は前回の結果を再利用し、問い合わせは1日{daily_limit()}回までに制限しています")
-        else:
-            st.caption("🔑 APIキー: 設定済み")
+    has_key = ai_key_configured()
+    use_ai = st.session_state.get("use_ai", bool(cfg["ai"]["enabled"] and has_key))
 
-        with st.expander("入力ファイルを置く", expanded=demo.enabled()):
+    def rerun_after_save(msg: str) -> None:
+        execute(use_ai)
+        st.toast(msg + " → 集計し直しました")
+        st.rerun()
+
+    n_err = res.error_count if res else 0
+    current = 1 if not files_ok else 2 if res is None else 3 if n_err else 4
+    done = {i for i in range(1, current)}
+    stepper(current, done)
+    st.write("")
+
+    # ---- ① ファイルを置く ----
+    with st.container(border=True):
+        if files_ok:  # 終わった手順は1行に縮めて、今の手順を画面の上に出す
+            st.markdown("**✓ 1. ファイル**　3つそろっています（" + "、".join(present[k][-1].name for k in UPLOAD_KINDS) + "）")
+        else:
+            st.subheader("1. ファイルを置く")
+            for k, v in UPLOAD_KINDS.items():
+                if present[k]:
+                    st.markdown(f"✅ **{v[0]}**：{present[k][-1].name}")
+                else:
+                    st.markdown(f"⬜ **{v[0]}**：まだありません　<span style='color:gray'>— {v[4]}</span>",
+                                unsafe_allow_html=True)
+        with st.expander("ファイルを置き直す" if files_ok else "ファイルを置く", expanded=not files_ok):
             if demo.enabled():
-                st.warning("公開デモです。実際の明細や個人情報を含むファイルは上げないでください。"
-                           "上げたファイルはあなた専用の場所に置かれ、1日で自動的に消えます。（1ファイル10MBまで）")
-                with st.popover("試せるサンプルファイル"):
+                st.warning("公開デモです。実際の明細や個人情報を含むファイルは置かないでください。"
+                           "置いたファイルはあなた専用の場所に保存され、1日で自動的に消えます。")
+                with st.popover("試せるサンプルファイルをダウンロード"):
                     for sm, folder in demo.SAMPLES.items():
-                        st.caption(f"{sm}（{'エラー入り' if sm == '2026-10' else 'エラーなし'}）")
+                        st.caption(f"{month_label(sm)}分（{'エラー入り' if sm == '2026-10' else 'エラーなし'}）")
                         for f in sorted((ROOT / "入力ファイル見本" / folder).iterdir()):
                             st.download_button(f"⬇ {f.name}", f.read_bytes(), file_name=f.name, key=f"smp{f.name}")
-            in_dir = ROOT / cfg["paths"]["input_dir"] / month
-            ups = {k: st.file_uploader(v[0], type=v[1], key=f"up_{k}") for k, v in UPLOAD_KINDS.items()}
-            if st.button("保存する", disabled=not any(ups.values())):
+            st.caption("ファイルをここにドラッグするか、「Upload」を押して選びます。選んだあと「保存する」を押すまでは置かれません。")
+            ups = {k: st.file_uploader(f"{v[0]} — {v[4]}", type=v[1], key=f"up_{k}") for k, v in UPLOAD_KINDS.items()}
+            if st.button("選んだファイルを保存する", disabled=not any(ups.values()), type="primary" if not files_ok else "secondary"):
                 problems = []
                 for k, f in ups.items():
-                    data = f.getvalue() if f else b""
-                    if f and not data.startswith(UPLOAD_KINDS[k][3]):
-                        problems.append(f"{f.name} は{UPLOAD_KINDS[k][0]}のファイルではありません")
-                    elif f and demo.enabled() and len(data) > DEMO_MAX_BYTES:
-                        problems.append(f"{f.name} が大きすぎます（デモは10MBまで）")
+                    if f and not f.getvalue().startswith(UPLOAD_KINDS[k][3]):
+                        problems.append(f"「{f.name}」は{UPLOAD_KINDS[k][0]}のファイルではありません")
                 if problems:
-                    st.error("保存しませんでした：" + " ／ ".join(problems))
+                    st.error("保存しませんでした：" + "／".join(problems))
                 else:
                     in_dir.mkdir(parents=True, exist_ok=True)
                     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -242,9 +305,8 @@ def page_aggregate(user: dict) -> None:
                     for k, f in ups.items():
                         if not f:
                             continue
-                        _, ext, prefix, _ = UPLOAD_KINDS[k]
-                        # 同じ種類の古いファイルは「置き換え前」へ移す（古い方を読んでしまわないように）
-                        for old in in_dir.glob(f"{prefix}*.{ext}"):
+                        _, ext, prefix, _, _ = UPLOAD_KINDS[k]
+                        for old in in_dir.glob(f"{prefix}*.{ext}"):  # 古い方は「置き換え前」へ（読み違い防止）
                             bk = in_dir / "置き換え前" / stamp
                             bk.mkdir(parents=True, exist_ok=True)
                             old.rename(bk / old.name)
@@ -253,164 +315,180 @@ def page_aggregate(user: dict) -> None:
                         (in_dir / name).write_bytes(f.getvalue())
                         saved.append(name)
                     db.log(user["username"], "ファイル保存", f"{month} {', '.join(saved)}")
-                    st.success("保存しました。「実行」を押すと、このファイルで集計します。")
-            if in_dir.exists():
-                st.caption("現在のファイル: " + ", ".join(p.name for p in sorted(in_dir.iterdir()) if p.is_file()))
+                    st.session_state.res = None  # ファイルが変わったので、集計はやり直し
+                    st.toast("ファイルを保存しました。次は「集計を実行する」を押してください。")
+                    st.rerun()
 
-        if st.button("▶ 実行（再集計）", type="primary", width="stretch"):
-            execute(month, use_ai)
+    # ---- ② 集計を実行する ----
+    with st.container(border=True):
+        if res is not None:
+            st.markdown(f"**✓ 2. 集計**　カード {len(res.cards)}枚／請求合計 ¥{res.totals['PDF請求合計']:,}")
+        else:
+            st.subheader("2. 集計を実行する")
+        if not files_ok:
+            missing = [UPLOAD_KINDS[k][0] for k, v in present.items() if not v]
+            st.caption("先に、1. でファイルを3つそろえてください（足りないもの：" + "、".join(missing) + "）")
+        if res is None:
+            st.caption("明細と台帳を照らし合わせ、施設ごとに金額を分けます。この時点ではまだCSVは作られません。")
+        if st.button("▶ 集計を実行する" if res is None else "↻ もう一度集計する",
+                     type="primary" if current == 2 else "secondary", disabled=not files_ok):
+            execute(use_ai)
+            st.rerun()
+        with st.expander("詳しい設定"):
+            st.toggle("読めない行をAIで読み取る（AI読取補助）", value=use_ai, disabled=not has_key, key="use_ai",
+                      help="明細PDFで読めなかった行だけをAIに送ります。カード番号・名前は送りません。")
+            if not has_key:
+                st.caption("AIのキーが設定されていないため使えません。読めない行は手入力になります。")
+            elif demo.enabled():
+                from src.ai_assist import daily_limit
+                st.caption(f"デモでは、同じ行は前回の結果を使い、AIへの問い合わせは1日{daily_limit()}回までです。")
+        if st.session_state.get("run_error"):
+            st.error(f"集計できませんでした：{st.session_state.run_error}\n\n"
+                     "ファイルの種類や、Excelの列名が正しいか確認してください。")
 
-    if st.session_state.get("run_error"):
-        st.error(f"実行できませんでした: {st.session_state.run_error}")
-    res = st.session_state.get("res")
-    if res is None or res.month != month:
-        st.title("集計")
-        st.info("左のメニューで対象月を確認し、「実行」を押してください。")
+    if res is None:
         return
 
     issues = res.issues
-    n_err = sum(1 for i in issues if i.severity == ERROR)
-    n_warn = sum(1 for i in issues if i.severity == WARNING)
-    st.title(f"{month_label(month)}分 ガソリンカード集計")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("カード数（明細）", f"{len(res.cards)} 枚")
-    c2.metric("PDF請求合計", f"¥{res.totals['PDF請求合計']:,}")
-    c3.metric("CSV合計", f"¥{res.totals['CSV借方合計']:,}")
-    c4.metric("エラー", f"{n_err} 件")
-    c5.metric("要確認", f"{n_warn} 件")
-    if res.can_export:
-        st.success("エラーはありません。明細合計・按分後合計・CSV合計が一致しています。費用振替CSVを出力できます。")
-    else:
-        st.warning(f"エラーが {n_err} 件あります。「エラー確認・修正」タブで修正し、再集計してください。"
-                   f"（保留中の金額 ¥{res.totals['エラーで保留中の金額']:,}）")
-
-    tabs = st.tabs(["🛠 エラー確認・修正", "✅ 整合性チェック", "💳 カード別一覧", "🏢 施設別集計", "📄 利用明細",
-                    "📥 出力", "📝 修正履歴"])
+    errors = [i for i in issues if i.severity == ERROR]
+    warns = [i for i in issues if i.severity == WARNING]
     fac = res.ledger.facilities
-    fac_options = [f"{r.facility_code} {r.facility_name}" for r in fac.itertuples()]
+    fac_codes = list(fac["facility_code"])
+    fac_label = dict(zip(fac["facility_code"], fac["facility_name"]))
 
-    def rerun_after_save(msg: str) -> None:
-        execute(month, use_ai)
-        st.toast(msg + " → 再集計しました")
-        st.rerun()
-
-    with tabs[0]:
-        df = pd.DataFrame([i.to_row() for i in issues])
-        if df.empty:
-            st.success("指摘はありません")
+    # ---- ③ エラーを直す ----
+    with st.container(border=True):
+        st.subheader("3. エラーを直す")
+        if not errors:
+            st.success("直す必要があるエラーはありません。")
         else:
-            df["カード番号"] = df["カード番号"].map(lambda x: format_card_no(x) if x else "")
-            sev = st.multiselect("重要度", [ERROR, WARNING, INFO], default=[ERROR, WARNING])
-            st.dataframe(df[df["重要度"].isin(sev)], width="stretch", hide_index=True)
-
-        st.subheader("エラーの修正")
-        st.caption("修正内容は元のExcel・PDFを書き換えずに修正ファイルへ保存され、再集計のたびに反映されます。"
-                   "恒久的な変更（カードの新規登録など）は管理台帳・按分資料も更新してください。")
-        fixable = [i for i in issues if i.severity == ERROR]
-        if not fixable:
-            st.info("修正が必要なエラーはありません")
+            held = res.totals["エラーで保留中の金額"]
+            st.warning(f"直す必要があるエラーが **{len(errors)}件** あります（この分の ¥{held:,} はまだCSVに入っていません）。"
+                       "上から順に直してください。「確定」を押すと、自動で集計し直します。")
         seen_emp: set[str] = set()
-        for n, iss in enumerate(fixable):
-            if iss.code.startswith("A"):
+        for n, iss in enumerate(errors):
+            if iss.code in ALLOC_FIX:
                 emp = iss.ref.get("employee_no", "")
                 if emp in seen_emp:
                     continue
                 seen_emp.add(emp)
-            label = f"[{iss.code}] {iss.title} — {format_card_no(iss.card_no) if iss.card_no else ''} {iss.user}"
-            with st.expander(label):
-                st.write(f"**詳細**: {iss.detail}")
-                st.write(f"**対処**: {iss.action}")
+            title, todo = PLAIN.get(iss.code, (iss.title, iss.action))
+            with st.container(border=True):
+                st.markdown(f"**{n + 1}. {title}**")
+                facts = []
+                if iss.card_no:
+                    facts.append(f"カード {format_card_no(iss.card_no)}")
+                if iss.user:
+                    facts.append(f"利用者・名義 {iss.user}")
+                if iss.amount is not None:
+                    facts.append(f"金額 ¥{iss.amount:,}")
+                st.caption("　／　".join(facts + [f"詳しく：{iss.detail}", f"コード {iss.code}"]))
+                st.markdown(f"👉 {todo}")
 
-                if iss.code in ("P001", "P002"):
+                if iss.code in AMOUNT_FIX:
                     default = iss.ref.get("subtotal") or iss.ref.get("read_sum") or 0
-                    amt = st.number_input("このカードの当月利用金額（PDF原本で確認した金額）", value=int(default),
-                                          step=1, key=f"amt{n}")
-                    if st.button("金額を確定", key=f"b{n}"):
+                    amt = st.number_input("このカードの今月の利用金額（円）", value=int(default), step=1, min_value=0,
+                                          key=f"amt{n}", help="明細PDFの「カード小計」の金額を入れてください")
+                    if st.button("この金額で確定", key=f"b{n}", type="primary"):
                         save_correction(cfg, month, "pdf_overrides", iss.card_no, {"amount": int(amt)}, who,
                                         f"{iss.code}: {iss.detail}")
-                        rerun_after_save("金額を保存しました")
+                        rerun_after_save("金額を確定しました")
 
-                elif iss.code in ("M001", "M002", "L001", "L003", "L004", "M004"):
-                    cats = ["施設", "AM", "アドバイザー"]
-                    f_sel = st.selectbox("利用施設", fac_options, key=f"f{n}")
-                    cat = st.selectbox("区分", cats, key=f"c{n}")
-                    emp = st.text_input("社員番号（AM・アドバイザーの場合）", key=f"e{n}")
-                    uname = st.text_input("利用者", value=iss.user, key=f"u{n}")
-                    if st.button("このカードの情報を確定", key=f"b{n}"):
+                elif iss.code in CARD_FIX:
+                    a, b_, c = st.columns(3)
+                    f_sel = a.selectbox("使った施設", [None] + fac_codes, key=f"f{n}",
+                                        format_func=lambda x: "選んでください" if x is None else f"{x} {fac_label[x]}")
+                    cat = b_.selectbox("区分", ["施設", "AM", "アドバイザー"], key=f"c{n}",
+                                       help="施設の車なら「施設」。複数施設を担当する人のカードなら「AM」「アドバイザー」")
+                    emp = c.text_input("社員番号（AM・アドバイザーのとき）", key=f"e{n}")
+                    need_emp = cat != "施設" and not emp.strip()
+                    if need_emp:
+                        st.caption("AM・アドバイザーの場合は社員番号を入れてください。")
+                    if st.button("この内容で確定", key=f"b{n}", type="primary", disabled=f_sel is None or need_emp):
                         save_correction(cfg, month, "card_overrides", iss.card_no, {
-                            "facility_code": f_sel.split(" ")[0], "category": cat, "employee_no": emp,
-                            "user_name": uname, "card_holder": iss.ref.get("holder", "")}, who,
+                            "facility_code": f_sel, "category": cat, "employee_no": emp.strip(),
+                            "user_name": iss.user, "card_holder": iss.ref.get("holder", "")}, who,
                             f"{iss.code}: {iss.detail}")
-                        rerun_after_save("カード情報を保存しました")
+                        rerun_after_save("カードの施設を確定しました")
 
-                elif iss.code in ("A001", "A002", "A003"):
+                elif iss.code in ALLOC_FIX:
                     emp = iss.ref.get("employee_no", "")
-                    plan = pd.DataFrame(iss.ref.get("plan") or [{"facility_code": fac_options[0].split(" ")[0],
-                                                                 "ratio": 100.0}])
-                    st.write(f"社員番号 **{emp}** の按分先と割合（合計100%）")
+                    plan = pd.DataFrame(iss.ref.get("plan") or [{"facility_code": None, "ratio": 100.0}])
+                    st.caption("行を追加・削除できます。施設を選び、割合（%）を入れてください。")
                     edited = st.data_editor(
                         plan, num_rows="dynamic", key=f"pl{n}", width="stretch",
                         column_config={
                             "facility_code": st.column_config.SelectboxColumn(
-                                "按分先施設コード", options=list(fac["facility_code"]), required=True),
-                            "ratio": st.column_config.NumberColumn("按分割合(%)", min_value=0, max_value=100,
-                                                                   required=True)})
+                                "按分先の施設", options=fac_codes, required=True),
+                            "ratio": st.column_config.NumberColumn("割合（%）", min_value=0, max_value=100, required=True)})
                     total = float(edited["ratio"].fillna(0).sum())
-                    st.write(f"合計: **{total:g}%**")
-                    if st.button("按分を確定", key=f"b{n}", disabled=abs(total - 100) > 1e-6):
-                        save_correction(cfg, month, "alloc_overrides", emp,
-                                        edited.dropna().to_dict("records"), who, f"{iss.code}: {iss.detail}")
-                        rerun_after_save("按分を保存しました")
+                    ok = abs(total - 100) < 1e-6 and edited["facility_code"].notna().all() and len(edited) > 0
+                    (st.success if ok else st.info)(f"いまの合計：{total:g}%" + ("" if ok else "　（100%にすると確定できます）"))
+                    if st.button("この割合で確定", key=f"b{n}", type="primary", disabled=not ok):
+                        save_correction(cfg, month, "alloc_overrides", emp, edited.dropna().to_dict("records"), who,
+                                        f"{iss.code}: {iss.detail}")
+                        rerun_after_save("按分の割合を確定しました")
                 else:
-                    st.info("この種類のエラーは画面からは修正できません。元データを確認してください。")
+                    st.caption("この画面では直せないエラーです。")
 
-    with tabs[1]:
-        t = pd.DataFrame([{"項目": k, "金額": f"¥{v:,}"} for k, v in res.totals.items()])
-        st.table(t)
-        st.write("判定: " + ("✅ 一致" if res.totals_ok else "❌ 不一致（エラー保留分を含め確認してください）"))
-        st.caption("確認内容：PDF請求合計 ＝ 明細読取合計 ＝ 按分前合計＋保留金額、按分前合計 ＝ 按分後合計 ＝ CSV合計")
+        if warns:
+            with st.expander(f"念のため確認してほしいもの（{len(warns)}件）— 直さなくてもCSVは出せます"):
+                for iss in warns:
+                    title, todo = PLAIN.get(iss.code, (iss.title, iss.action))
+                    st.markdown(f"**{title}**　{todo}")
+                    st.caption(f"{format_card_no(iss.card_no) if iss.card_no else ''}　{iss.detail}")
 
-    sheets = summary_sheets(res)
-    with tabs[2]:
-        st.dataframe(sheets["カード別一覧"], width="stretch", hide_index=True)
-    with tabs[3]:
-        st.dataframe(sheets["施設別集計"], width="stretch", hide_index=True)
-    with tabs[4]:
-        st.dataframe(sheets["利用明細"], width="stretch", hide_index=True)
-
-    with tabs[5]:
-        for key, label in [("csv", "費用振替CSV"), ("summary", "カード別・施設別集計一覧（Excel）"),
-                           ("errors", "エラー一覧（Excel）")]:
-            p: Path | None = res.outputs.get(key)
-            if p and p.exists():
-                st.download_button(f"⬇ {label}", p.read_bytes(), file_name=p.name, key=f"dl{key}",
-                                   on_click=db.log, args=(user["username"], "ダウンロード", f"{month} {p.name}"))
-            elif key == "csv":
-                st.button(f"⬇ {label}（エラー解消後に出力されます）", disabled=True)
-        if res.can_export:
-            st.subheader("CSVプレビュー")
-            st.dataframe(res.journal, width="stretch", hide_index=True)
-        if not demo.enabled():
-            st.caption(f"出力先フォルダ: {ROOT / cfg['paths']['output_dir'] / month}")
-
-    with tabs[6]:
         corr = load_corrections(cfg, month)
-        if not demo.enabled():
-            st.caption(f"修正ファイル: {corrections_path(cfg, month)}")
-        for kind, label in [("pdf_overrides", "金額の補正"), ("card_overrides", "カード情報の補正"),
-                            ("alloc_overrides", "按分の補正")]:
-            st.markdown(f"**{label}**")
-            if not corr[kind]:
-                st.caption("なし")
-            for key, val in corr[kind].items():
-                cols = st.columns([5, 1])
-                cols[0].code(f"{key}: {val}")
-                if cols[1].button("取消", key=f"del{kind}{key}"):
-                    save_correction(cfg, month, kind, key, None, who, "取消")
-                    rerun_after_save("補正を取り消しました")
-        if corr["history"]:
-            st.markdown("**操作履歴**")
-            st.dataframe(pd.DataFrame(corr["history"]).iloc[::-1], width="stretch", hide_index=True)
+        fixes = [(k, key, val) for k in ("pdf_overrides", "card_overrides", "alloc_overrides")
+                 for key, val in corr[k].items()]
+        if fixes:
+            with st.expander(f"これまでに直した内容（{len(fixes)}件）— 間違えたときはここで取り消せます"):
+                kind_label = {"pdf_overrides": "金額", "card_overrides": "カードの施設", "alloc_overrides": "按分の割合"}
+                for kind, key, val in fixes:
+                    a, b_ = st.columns([5, 1])
+                    if kind == "pdf_overrides":
+                        desc = f"カード {format_card_no(key)} の金額 → ¥{val['amount']:,}"
+                    elif kind == "card_overrides":
+                        desc = f"カード {format_card_no(key)} → {val['facility_code']} {fac_label.get(val['facility_code'], '')}（{val['category']}）"
+                    else:
+                        desc = f"社員番号 {key} → " + "、".join(f"{p['facility_code']} {p['ratio']:g}%" for p in val)
+                    a.markdown(f"{kind_label[kind]}：{desc}")
+                    if b_.button("取り消す", key=f"del{kind}{key}"):
+                        save_correction(cfg, month, kind, key, None, who, "取消")
+                        rerun_after_save("取り消しました")
+
+    # ---- ④ CSVを出す ----
+    with st.container(border=True):
+        st.subheader("4. CSVを出す")
+        if res.can_export:
+            t = res.totals
+            st.success(f"エラーはありません。請求合計 ¥{t['PDF請求合計']:,} ＝ 施設に分けた合計 ¥{t['按分後合計']:,} ＝ "
+                       f"CSVの合計 ¥{t['CSV借方合計']:,} で、すべて一致しています。")
+            p = res.outputs.get("csv")
+            if p and p.exists():
+                st.download_button("⬇ 費用振替CSVをダウンロード（会計システムに取り込む用）", p.read_bytes(),
+                                   file_name=p.name, type="primary", key="dlcsv",
+                                   on_click=db.log, args=(user["username"], "ダウンロード", f"{month} {p.name}"))
+            a, b_ = st.columns(2)
+            for col, key, label in [(a, "summary", "⬇ 集計一覧（Excel・保管用）"), (b_, "errors", "⬇ エラー一覧（Excel・記録用）")]:
+                p = res.outputs.get(key)
+                if p and p.exists():
+                    col.download_button(label, p.read_bytes(), file_name=p.name, key=f"dl{key}",
+                                        on_click=db.log, args=(user["username"], "ダウンロード", f"{month} {p.name}"))
+            with st.expander("CSVの中身を見る"):
+                st.dataframe(res.journal, width="stretch", hide_index=True)
+        else:
+            st.info(f"あと **{n_err}件** のエラーを直すと、ここに「CSVをダウンロード」ボタンが出ます。"
+                    "（間違った金額が会計に入らないよう、エラーが残っている間はCSVを作りません）")
+
+    # ---- 詳しく見る ----
+    with st.expander("詳しく見る（カード別・施設別・明細・合計の内訳）"):
+        sheets = summary_sheets(res)
+        t1, t2, t3, t4 = st.tabs(["施設別", "カード別", "明細", "合計の内訳"])
+        t1.dataframe(sheets["施設別集計"], width="stretch", hide_index=True)
+        t2.dataframe(sheets["カード別一覧"], width="stretch", hide_index=True)
+        t3.dataframe(sheets["利用明細"], width="stretch", hide_index=True)
+        t4.table(pd.DataFrame([{"項目": k, "金額": f"¥{v:,}"} for k, v in res.totals.items()]))
 
 
 # =============================================================================

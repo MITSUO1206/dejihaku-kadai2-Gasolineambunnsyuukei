@@ -2,7 +2,7 @@
 # ※ クラウド（Streamlit Community Cloud）でも動くよう、待ち受けアドレスはここでは指定しません
 [server]
 headless = true
-maxUploadSize = 50
+maxUploadSize = 10
 
 [browser]
 gatherUsageStats = false
