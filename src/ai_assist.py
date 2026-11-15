@@ -10,7 +10,9 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from datetime import datetime
 
 from .common import ROOT
@@ -77,6 +79,51 @@ def ask_claude(items: list[dict], cfg: dict, client=None) -> list[dict]:
     return json.loads(text)["lines"]
 
 
+def _path(cfg: dict, name: str):
+    return ROOT / cfg["paths"]["logs_dir"] / name
+
+
+def _key(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _read_json(path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return default
+
+
+def _write_json(path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def daily_limit() -> int:
+    """1日に実際にAPIへ問い合わせる回数の上限。0 = 上限なし。公開デモは既定20回"""
+    from . import demo
+    raw = os.environ.get("GASCARD_AI_DAILY_LIMIT")
+    if raw is not None and raw.strip().isdigit():
+        return int(raw)
+    return 20 if demo.enabled() else 0
+
+
+def _take_daily_quota(cfg: dict) -> bool:
+    limit = daily_limit()
+    if limit == 0:
+        return True
+    p = _path(cfg, "ai_usage.json")
+    today = datetime.now().strftime("%Y-%m-%d")
+    usage = _read_json(p, {})
+    if usage.get("date") != today:
+        usage = {"date": today, "calls": 0}
+    if usage["calls"] >= limit:
+        return False
+    usage["calls"] += 1
+    _write_json(p, usage)
+    return True
+
+
 def _log(entry: dict, cfg: dict) -> None:
     log_dir = ROOT / cfg["paths"]["logs_dir"]
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -97,15 +144,27 @@ def repair_unreadable_lines(st, cfg: dict, client=None) -> None:
     if not items:
         return
 
-    entry = {"time": datetime.now().isoformat(timespec="seconds"), "sent": items}
-    try:
-        results = ask_claude(items, cfg, client)
-        entry["received"] = results
-    except Exception as e:  # APIキー未設定・通信断など。AIなしで続行する
-        entry["error"] = f"{type(e).__name__}: {e}"
-        _log(entry, cfg)
-        st.ai_log.append(entry)
-        return
+    # 同じ行は前回の答えを使う（料金を使わない）。採用するかは毎回、小計との検算で決める
+    cache = _read_json(_path(cfg, "ai_cache.json"), {})
+    results = [{**cache[_key(x["text"])], "line_id": x["line_id"]} for x in items if _key(x["text"]) in cache]
+    pending = [x for x in items if _key(x["text"]) not in cache]
+    entry = {"time": datetime.now().isoformat(timespec="seconds"), "sent": pending,
+             "from_cache": len(items) - len(pending)}
+    if pending:
+        if not _take_daily_quota(cfg):
+            entry["error"] = "1日の問い合わせ上限に達したため、AIを使わずに続行"
+        else:
+            try:
+                got = ask_claude(pending, cfg, client)
+                entry["received"] = got
+                text_of = {x["line_id"]: x["text"] for x in pending}
+                for r in got:
+                    if r["line_id"] in text_of:
+                        cache[_key(text_of[r["line_id"]])] = {k: v for k, v in r.items() if k != "line_id"}
+                _write_json(_path(cfg, "ai_cache.json"), cache)
+                results += got
+            except Exception as e:  # APIキー未設定・通信断など。AIなしで続行する
+                entry["error"] = f"{type(e).__name__}: {e}"
     _log(entry, cfg)
     st.ai_log.append(entry)
 

@@ -170,13 +170,16 @@ def page_aggregate(user: dict) -> None:
         if not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", month):
             st.error("対象月は 2026-10 のように YYYY-MM 形式で入力してください")
             st.stop()
-        has_key = ai_key_configured() and not demo.enabled()  # 公開デモではAPI料金を使わせない
+        has_key = ai_key_configured()
         use_ai = st.toggle("AI読取補助を使う", value=cfg["ai"]["enabled"] and has_key, disabled=not has_key,
                            help="ルールで読めなかった明細行だけをClaude APIに送ります。カード番号・名義は送りません。")
-        if demo.enabled():
-            st.caption("🔑 デモではAI読取補助は使いません")
+        if not has_key:
+            st.caption("🔑 APIキー未設定（AI読取補助は使えません）")
+        elif demo.enabled():
+            from src.ai_assist import daily_limit
+            st.caption(f"🔑 AI読取補助：同じ行は前回の結果を再利用し、問い合わせは1日{daily_limit()}回までに制限しています")
         else:
-            st.caption("🔑 APIキー: 設定済み" if has_key else "🔑 APIキー未設定（AI読取補助は使えません）")
+            st.caption("🔑 APIキー: 設定済み")
 
         if demo.enabled():
             st.caption("📁 デモでは架空データ（2026-10：エラー入り／2026-11：エラーなし）を使います。"

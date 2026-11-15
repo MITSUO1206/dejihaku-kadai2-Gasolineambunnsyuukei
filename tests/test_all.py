@@ -139,6 +139,32 @@ def test_ai_failure_falls_back(env):
     assert "error" in res.statement.ai_log[0]
 
 
+def test_ai_cache_avoids_second_api_call(env):
+    cfg, data = env
+    calls = []
+    inner = _fake_client(lambda t: data["answer"]["garbled_amount"])
+
+    def counting(**kw):
+        calls.append(1)
+        return inner.beta.messages.create(**kw)
+    client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(create=counting)))
+    r1 = run(MONTH, cfg, use_ai=True, ai_client=client)
+    r2 = run(MONTH, cfg, use_ai=True, ai_client=client)
+    assert len(calls) == 1  # 2回目は保存した答えを使い、APIを呼ばない
+    assert "P005" in codes(r1) and "P005" in codes(r2) and "P001" not in codes(r2)
+
+
+def test_ai_daily_limit(env, monkeypatch):
+    cfg, data = env
+    monkeypatch.setenv("GASCARD_AI_DAILY_LIMIT", "1")
+    res = run(MONTH, cfg, use_ai=True, ai_client=_fake_client(lambda t: 1))  # 1回目：不採用の答え
+    assert "P001" in codes(res)
+    (Path(cfg["paths"]["logs_dir"]) / "ai_cache.json").unlink()  # 答えを消して再度問い合わせが必要な状態に
+    res = run(MONTH, cfg, use_ai=True, ai_client=_fake_client(lambda t: data["answer"]["garbled_amount"]))
+    assert "P001" in codes(res)  # 上限に達しているのでAIを使わず手入力へ
+    assert "上限" in res.statement.ai_log[-1]["error"]
+
+
 def test_fix_all_then_csv_matches(env):
     cfg, data = env
     res = run(MONTH, cfg, use_ai=False)
