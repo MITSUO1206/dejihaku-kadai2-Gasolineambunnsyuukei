@@ -145,6 +145,16 @@ def delete_setting(key: str) -> None:
         con.execute("DELETE FROM settings WHERE key = ?", (key,))
 
 
+def last_run(username: str) -> dict | None:
+    """その人が最後に集計した記録（ログイン後に「前回の続き」を出すのに使う）"""
+    if not _DB_PATH.exists():
+        return None
+    with connect() as con:
+        r = con.execute("SELECT month, run_at, error_count, exported FROM runs WHERE username = ? "
+                        "ORDER BY id DESC LIMIT 1", (username,)).fetchone()
+    return dict(r) if r else None
+
+
 # ---- 集計結果の保存 ------------------------------------------------------------
 def save_run(res, username: str) -> None:
     """実行記録を残し、CSVを出力できた月は施設別の確定金額を保存し直す"""

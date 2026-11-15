@@ -87,7 +87,7 @@ def load_ledger(path: Path, cfg: dict, month: str, card_overrides: dict | None =
             issues.append(Issue("L001", f"{where}: {'・'.join(blanks)} が空欄", card_no=r["card_no"],
                                 user=r["user_name"]))
         if r["facility_code"] and r["facility_code"] not in fac_codes:
-            issues.append(Issue("L003", f"{where}: 施設コード {r['facility_code']} は施設マスタにありません",
+            issues.append(Issue("L003", f"{where}: 施設コード {r['facility_code']} は施設一覧にありません",
                                 card_no=r["card_no"], facility=r["facility_code"], user=r["user_name"]))
         if r["category"] and r["category"] not in VALID_CATEGORIES:
             issues.append(Issue("L004", f"{where}: 区分「{r['category']}」", card_no=r["card_no"]))

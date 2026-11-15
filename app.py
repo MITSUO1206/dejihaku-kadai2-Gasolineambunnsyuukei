@@ -207,10 +207,12 @@ def workspace_cfg() -> dict:
     return w
 
 
-def stepper(current: int, done: set[int]) -> None:
+def stepper(current: int, done: set[int], finished: bool = False) -> None:
     cols = st.columns(len(STEPS))
     for i, (col, name) in enumerate(zip(cols, STEPS), start=1):
-        if i in done:
+        if i == 4 and finished:
+            col.success("✓ 4. CSVを保存済み（完了）")
+        elif i in done:
             col.success(f"✓ {i}. {name}")
         elif i == current:
             col.info(f"▶ {i}. {name}")
@@ -219,7 +221,7 @@ def stepper(current: int, done: set[int]) -> None:
 
 
 def page_aggregate(user: dict) -> None:
-    who = f"{user['display_name']}（{user['username']}）"
+    who = user["username"]  # 操作ログ・修正履歴の記録はユーザー名にそろえる
     cfg = workspace_cfg()
     input_root = ROOT / cfg["paths"]["input_dir"]
 
@@ -230,6 +232,11 @@ def page_aggregate(user: dict) -> None:
     months = sorted(set(months) | set(extra), reverse=True) or [datetime.now().strftime("%Y-%m")]
     if "_pending_month" in st.session_state:  # 「別の月を追加」で選んだ月を、選択欄を作る前に反映する
         st.session_state.month = st.session_state.pop("_pending_month")
+    if "month" not in st.session_state:  # ログインし直したときは「前回の続き」の月から始める
+        last = db.last_run(user["username"])
+        if last and last["month"] in months:
+            st.session_state.month = last["month"]
+            st.session_state._resume = last
     c1, c2 = st.columns([2, 3])
     month = c1.selectbox("対象月（カードを使った月）", months, format_func=month_label, key="month")
     with c2.popover("＋ 別の月を追加"):
@@ -266,15 +273,49 @@ def page_aggregate(user: dict) -> None:
     has_key = ai_key_configured()
     use_ai = st.session_state.get("use_ai", bool(cfg["ai"]["enabled"] and has_key))
 
+    def err_keys(r) -> dict:
+        return {} if r is None else {f"{i.code}_{i.card_no or i.ref.get('employee_no', '')}": i
+                                     for i in r.issues if i.severity == ERROR}
+
     def rerun_after_save(msg: str) -> None:
+        """確定・取り消しのあと集計し直し、何が直って何が増えたかを伝える"""
+        before = err_keys(st.session_state.get("res"))
         execute(use_ai)
-        st.toast(msg + " → 集計し直しました")
+        after = err_keys(st.session_state.get("res"))
+        fixed = len(set(before) - set(after))
+        added = [after[k] for k in set(after) - set(before)]
+        text = f"{msg}。" + (f"{fixed}件直りました。" if fixed else "")
+        if added:
+            names = "、".join(f"{PLAIN.get(i.code, (i.title,))[0]}（{i.ref.get('employee_no') or format_card_no(i.card_no)}）"
+                             for i in added)
+            text += f"この入力で、新しく{len(added)}件の確認が必要になりました：{names}。下の一覧に追加しています。"
+        text += f"残り{len(after)}件です。"
+        st.session_state.change_msg = text
+        st.toast(text)
         st.rerun()
+
+    # ログインし直したとき：前回の続きをそのまま開く（集計し直して、今の状態を出す）
+    resume = st.session_state.pop("_resume", None)
+    if resume and files_ok and res is None and resume["month"] == month:
+        execute(use_ai)
+        res = st.session_state.get("res")
+        st.info(f"前回の続きです：{month_label(month)}分（前回の集計 {resume['run_at'].replace('T', ' ')[:16]}）")
 
     n_err = res.error_count if res else 0
     current = 1 if not files_ok else 2 if res is None else 3 if n_err else 4
     done = {i for i in range(1, current)}
-    stepper(current, done)
+    dl_logs = [r for r in db.recent_logs(200, action="ダウンロード")
+               if r["detail"].startswith(month) and "費用振替" in r["detail"]] if res is not None else []
+    stepper(current, done, finished=bool(res is not None and res.can_export and dl_logs))
+    if res is not None and res.can_export:  # CSVを出せるときは、スクロールしなくてもボタンが見えるようにする
+        p_csv = res.outputs.get("csv")
+        if p_csv and p_csv.exists():
+            a, b_ = st.columns([3, 2])
+            a.success("エラーはありません。費用振替CSVを出せます。" if not dl_logs else
+                      f"この月のCSVは保存済みです（{dl_logs[0]['ts'].replace('T', ' ')[:16]} {dl_logs[0]['username']}）。")
+            b_.download_button("⬇ 費用振替CSVをダウンロード", p_csv.read_bytes(), file_name=p_csv.name,
+                               type="primary", key="dlcsv_top", width="stretch",
+                               on_click=db.log, args=(user["username"], "ダウンロード", f"{month} {p_csv.name}"))
     st.write("")
 
     if other_month:
@@ -381,6 +422,9 @@ def page_aggregate(user: dict) -> None:
 
     with st.container(border=True):
         st.subheader("3. エラーを直す")
+        change = st.session_state.pop("change_msg", None)
+        if change:
+            st.info("🔄 " + change)
         if not errors:
             st.success("直す必要があるエラーはありません。")
         else:
@@ -451,29 +495,46 @@ def page_aggregate(user: dict) -> None:
                     if hint:
                         st.caption("💡 先月は " + "、".join(f"{h['facility_code']} {fac_label.get(h['facility_code'], '')} "
                                                           f"{h['ratio']:g}%" for h in hint) + " で確定しています。")
-                    rows = iss.ref.get("plan") or [{"facility_code": None, "ratio": 100.0}]
-                    plan = pd.DataFrame([{"施設": (f"{r['facility_code']} {fac_label.get(r['facility_code'], '')}"
-                                                  if r.get("facility_code") else None),
-                                          "割合": float(r["ratio"])} for r in rows])
-                    st.caption("施設の欄をクリックして選び、割合（%）を入れてください。行は追加・削除できます。")
-                    edited = st.data_editor(
-                        plan, num_rows="dynamic", key=f"pl_{uid}", width="stretch", hide_index=True,
-                        column_config={
-                            "施設": st.column_config.SelectboxColumn("按分先の施設", options=fac_opt, required=True),
-                            "割合": st.column_config.NumberColumn("割合（%）", min_value=0, max_value=100, required=True)})
-                    total = float(edited["割合"].fillna(0).sum())
-                    no_fac = edited["施設"].isna().any() or len(edited) == 0
-                    ok = abs(total - 100) < 1e-6 and not no_fac
+                    # 行は通し番号（id）で区別する。並び順で区別すると、行を消したときに入力が隣の行へずれる
+                    rk = f"rows_{uid}"
+                    if rk not in st.session_state:
+                        init = iss.ref.get("plan") or [{"facility_code": None, "ratio": 100.0}]
+                        st.session_state[rk] = [{"id": i, "fc": r.get("facility_code"), "ratio": float(r["ratio"])}
+                                                for i, r in enumerate(init)]
+                        st.session_state[rk + "_next"] = len(init)
+                    rows = st.session_state[rk]
+                    st.caption("按分先の施設と割合（%）を入れてください。按分先は「＋ 按分先を追加」で増やせます。")
+                    for r in rows:
+                        c1_, c2_, c3_ = st.columns([4, 2, 1])
+                        r["fc"] = c1_.selectbox("按分先の施設", [None] + fac_codes, key=f"af_{uid}_{r['id']}",
+                                                index=([None] + fac_codes).index(r["fc"]) if r["fc"] in fac_codes else 0,
+                                                format_func=lambda x: "選んでください" if x is None else f"{x} {fac_label[x]}")
+                        r["ratio"] = c2_.number_input("割合（%）", 0.0, 100.0, value=r["ratio"], step=1.0,
+                                                      key=f"ar_{uid}_{r['id']}")
+                        c3_.write(""); c3_.write("")
+                        if c3_.button("削除", key=f"ad_{uid}_{r['id']}", disabled=len(rows) <= 1):
+                            st.session_state[rk] = [x for x in rows if x["id"] != r["id"]]
+                            st.rerun()
+                    if st.button("＋ 按分先を追加", key=f"aa_{uid}"):
+                        rows.append({"id": st.session_state[rk + "_next"], "fc": None, "ratio": 0.0})
+                        st.session_state[rk + "_next"] += 1
+                        st.rerun()
+                    total = round(sum(r["ratio"] for r in rows), 4)
+                    no_fac = any(r["fc"] is None for r in rows)
+                    dup = len({r["fc"] for r in rows if r["fc"]}) < len([r for r in rows if r["fc"]])
+                    ok = abs(total - 100) < 1e-6 and not no_fac and not dup
                     if ok:
                         st.success(f"いまの合計：{total:g}%　確定できます。")
                     elif no_fac:
-                        st.info(f"いまの合計：{total:g}%　按分先の施設が空いている行があります。施設を選んでください。")
+                        st.info(f"いまの合計：{total:g}%　按分先の施設が「選んでください」のままの行があります。")
+                    elif dup:
+                        st.info(f"いまの合計：{total:g}%　同じ施設が2回選ばれています。1行にまとめてください。")
                     else:
                         st.info(f"いまの合計：{total:g}%　合計が100%になるように割合を直してください。")
                     if st.button("この割合で確定", key=f"b_{uid}", type="primary", disabled=not ok):
-                        recs = [{"facility_code": r["施設"].split(" ")[0], "ratio": float(r["割合"])}
-                                for _, r in edited.iterrows()]
+                        recs = [{"facility_code": r["fc"], "ratio": float(r["ratio"])} for r in rows]
                         save_correction(cfg, month, "alloc_overrides", emp, recs, who, f"{iss.code}: {iss.detail}")
+                        st.session_state.pop(rk, None)
                         rerun_after_save("按分の割合を確定しました")
                 else:
                     st.caption("この画面では直せないエラーです。")
@@ -500,10 +561,24 @@ def page_aggregate(user: dict) -> None:
                     else:
                         desc = f"社員番号 {key} → " + "、".join(
                             f"{p['facility_code']} {fac_label.get(p['facility_code'], '')} {p['ratio']:g}%" for p in val)
+                    last = next((h for h in reversed(corr["history"]) if h["kind"] == kind and h["key"] == key), None)
                     a.markdown(f"{kind_label[kind]}：{desc}")
-                    if b_.button("取り消す", key=f"del{kind}{key}"):
-                        save_correction(cfg, month, kind, key, None, who, "取消")
-                        rerun_after_save("取り消しました")
+                    if last:
+                        a.caption(f"{last['time'].replace('T', ' ')[:16]}　{last['who']}")
+                    ck = f"undo_{kind}_{key}"
+                    if st.session_state.get("confirm_undo") == ck:  # 押し間違えて消さないよう、もう一度確認する
+                        a.warning(f"{desc} を取り消します。よろしいですか？（取り消すと、このエラーがもう一度出ます）")
+                        y_, n_ = a.columns(2)
+                        if y_.button("はい、取り消す", key=f"y_{ck}", type="primary"):
+                            st.session_state.pop("confirm_undo", None)
+                            save_correction(cfg, month, kind, key, None, who, "取消")
+                            rerun_after_save(f"{kind_label[kind]}の修正を取り消しました（{desc.split(' →')[0]}）")
+                        if n_.button("やめる", key=f"n_{ck}"):
+                            st.session_state.pop("confirm_undo", None)
+                            st.rerun()
+                    elif b_.button("取り消す", key=f"del{kind}{key}"):
+                        st.session_state.confirm_undo = ck
+                        st.rerun()
 
     # ---- ④ CSVを出す ----
     with st.container(border=True):
@@ -616,7 +691,7 @@ def page_admin(me: dict) -> None:
             "ユーザー名": u["username"], "表示名": u["display_name"], "役割": u["role_label"],
             "状態": "有効" if u["active"] else "無効",
             "ロック": "ロック中" if u["locked_until"] and u["locked_until"] > db.now() else "",
-            "最終ログイン": u["last_login_at"] or "—"} for u in users])
+            "最終ログイン": (u["last_login_at"] or "—").replace("T", " ")[:16]} for u in users])
         st.dataframe(view, width="stretch", hide_index=True)
 
         c1, c2 = st.columns(2)
@@ -652,7 +727,7 @@ def page_admin(me: dict) -> None:
                         auth.set_role(target, new_role, me["username"]); st.rerun()
                     if b2.button("無効にする" if tu["active"] else "有効にする"):
                         auth.set_active(target, not tu["active"], me["username"]); st.rerun()
-                    if b3.button("パスワード再発行"):
+                    if b3.button("再発行"):
                         st.session_state.issued_pw = (target, auth.reset_password(target, me["username"]))
                         st.rerun()
                 except auth.AuthError as e:
@@ -721,6 +796,7 @@ def page_admin(me: dict) -> None:
             st.caption("該当するログはありません")
         else:
             logs.columns = ["日時", "ユーザー", "操作", "内容"]
+            logs["日時"] = logs["日時"].str.replace("T", " ")
             st.dataframe(logs, width="stretch", hide_index=True)
             st.download_button("⬇ 表示中のログをCSVで保存", logs.to_csv(index=False).encode("utf-8-sig"),
                                file_name=f"操作ログ_{datetime.now():%Y%m%d}.csv",
