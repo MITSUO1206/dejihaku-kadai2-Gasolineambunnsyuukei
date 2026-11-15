@@ -1,0 +1,274 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>解説動画スライド</title>
+<style>
+:root{ --ink:#1b2430; --sub:#5b6676; --line:#dfe3ea; --bg:#f4f6f9; --navy:#1f3a5f; --teal:#0f766e; --teal-l:#e3f3f0;
+  --amber:#b45309; --amber-l:#fdf1dc; --red:#b91c1c; --red-l:#fde8e8; --green:#15803d; --green-l:#e4f4e9; }
+*{ box-sizing:border-box; margin:0; }
+html,body{ width:1920px; height:1080px; overflow:hidden; background:var(--bg); color:var(--ink);
+  font-family:"BIZ UDPGothic","Noto Sans JP","Yu Gothic UI",sans-serif; }
+.scene{ position:absolute; inset:0; padding:90px 120px 230px; display:none; flex-direction:column; }
+.scene.on{ display:flex; }
+.head{ display:flex; align-items:center; gap:24px; margin-bottom:46px; }
+.head .no{ background:var(--navy); color:#fff; font-weight:700; font-size:26px; border-radius:12px; padding:8px 18px; letter-spacing:.05em; }
+.head h2{ font-size:58px; color:var(--navy); letter-spacing:.01em; }
+.body{ flex:1; display:flex; flex-direction:column; justify-content:center; }
+[data-s]{ transition:none; }
+.hide{ opacity:0; }
+.dim{ opacity:.35; }
+.row{ display:flex; gap:36px; align-items:stretch; justify-content:center; }
+.card{ background:#fff; border:2px solid var(--line); border-radius:24px; padding:34px 36px; box-shadow:0 6px 22px rgba(31,58,95,.07); }
+.card h3{ font-size:38px; color:var(--navy); margin-bottom:12px; }
+.card p{ font-size:30px; color:var(--sub); line-height:1.5; }
+.big{ font-size:96px; font-weight:800; color:var(--teal); line-height:1; }
+.arrow{ font-size:80px; color:var(--teal); font-weight:800; display:flex; align-items:center; }
+.chip{ display:inline-block; border-radius:999px; padding:6px 22px; font-size:28px; font-weight:700; }
+.chip.e{ background:var(--red); color:#fff; } .chip.ok{ background:var(--green); color:#fff; }
+.cap{ position:absolute; left:0; right:0; bottom:0; height:170px; background:rgba(20,32,48,.92); color:#fff;
+  display:flex; align-items:center; justify-content:center; padding:0 140px; text-align:center; font-size:44px; line-height:1.45; font-weight:700; }
+.prog{ position:absolute; left:0; bottom:170px; height:8px; background:var(--teal); }
+.brand{ position:absolute; right:60px; top:36px; font-size:24px; color:var(--sub); }
+
+/* s1 title */
+#s1{ background:linear-gradient(150deg,#1f3a5f 0%,#24527a 55%,#0f766e 100%); color:#fff; justify-content:center; }
+#s1 .t-tag{ font-size:30px; border:2px solid rgba(255,255,255,.5); border-radius:999px; padding:6px 24px; align-self:flex-start; }
+#s1 h1{ font-size:110px; line-height:1.2; margin:40px 0 30px; }
+#s1 .t-sub{ font-size:42px; opacity:.9; }
+/* s2 facilities */
+.fac{ display:grid; grid-template-columns:repeat(10,1fr); gap:18px; }
+.fac div{ background:#fff; border:2px solid var(--line); border-radius:16px; height:92px; display:flex; align-items:center; justify-content:center; font-size:48px; }
+.inv{ display:flex; align-items:center; gap:40px; justify-content:center; margin-top:40px; }
+.inv .paper{ background:#fff; border:3px solid var(--navy); border-radius:16px; padding:24px 36px; font-size:36px; font-weight:700; color:var(--navy); }
+/* s3 split */
+.split{ display:grid; grid-template-columns:420px 120px 1fr; align-items:center; gap:20px; }
+.hq{ background:var(--navy); color:#fff; border-radius:28px; padding:50px; text-align:center; }
+.hq b{ display:block; font-size:44px; } .hq span{ font-size:70px; font-weight:800; }
+.dest{ display:flex; flex-direction:column; gap:18px; }
+.dest div{ background:#fff; border:2px solid var(--line); border-left:12px solid var(--teal); border-radius:16px; padding:18px 30px; font-size:38px; display:flex; justify-content:space-between; }
+/* s5 table */
+table{ border-collapse:collapse; font-size:40px; width:100%; }
+th,td{ padding:20px 30px; border-bottom:2px solid var(--line); text-align:left; }
+th{ background:var(--navy); color:#fff; } td.n{ text-align:right; font-variant-numeric:tabular-nums; }
+tr.total td{ font-weight:800; color:var(--teal); border-bottom:none; }
+/* s6 ipo */
+.ipo{ display:grid; grid-template-columns:1fr 110px 1fr 110px 1fr; align-items:center; }
+.stack{ display:flex; flex-direction:column; gap:22px; }
+.doc{ background:#fff; border:2px solid var(--line); border-left:12px solid var(--teal); border-radius:16px; padding:22px 26px; font-size:34px; font-weight:700; }
+.doc.o{ border-left-color:var(--amber); }
+.engine{ background:var(--navy); color:#fff; border-radius:28px; padding:40px; text-align:center; font-size:44px; font-weight:800; }
+.engine small{ display:block; font-size:28px; font-weight:400; opacity:.85; margin-top:12px; }
+/* s7 steps */
+.steps{ display:grid; grid-template-columns:repeat(6,1fr); gap:22px; }
+.steps .st{ background:#fff; border:2px solid var(--line); border-radius:22px; padding:30px 18px; text-align:center; min-height:330px; }
+.steps .st .n{ width:84px; height:84px; border-radius:50%; background:var(--teal); color:#fff; font-size:44px; font-weight:800; display:inline-flex; align-items:center; justify-content:center; }
+.steps .st h3{ font-size:36px; color:var(--navy); margin:22px 0 12px; }
+.steps .st p{ font-size:26px; color:var(--sub); line-height:1.45; }
+.steps .st.hl{ border-color:var(--teal); box-shadow:0 0 0 6px var(--teal-l); }
+/* s8 */
+.who{ display:grid; grid-template-columns:1fr 1fr; gap:40px; }
+.who .card ul{ font-size:34px; line-height:1.8; padding-left:40px; color:var(--ink); }
+/* s9 eq */
+.eq{ display:flex; align-items:center; justify-content:center; gap:30px; }
+.eq .t{ background:#fff; border:4px solid var(--teal); border-radius:24px; padding:36px 40px; text-align:center; font-size:44px; font-weight:800; }
+.eq .t small{ display:block; font-size:28px; color:var(--sub); font-weight:400; margin-top:8px; }
+.eq .s{ font-size:90px; font-weight:800; color:var(--teal); }
+/* s10 ai */
+.ai{ display:grid; grid-template-columns:1fr 90px 1fr 90px 1fr; align-items:center; }
+.mono{ font-family:"BIZ UDGothic",monospace; font-size:36px; background:#fff; border:2px dashed var(--red); border-radius:16px; padding:26px; text-align:center; }
+.claude{ background:#d97757; color:#fff; border-radius:28px; padding:40px 20px; text-align:center; font-size:46px; font-weight:800; }
+.res{ background:var(--green-l); border:3px solid var(--green); border-radius:24px; padding:28px; text-align:center; font-size:48px; font-weight:800; color:var(--green); }
+.shield{ margin-top:44px; display:flex; gap:30px; justify-content:center; }
+/* s11 app */
+.app{ display:grid; grid-template-columns:1.6fr 1fr; gap:44px; align-items:center; }
+.app img{ width:100%; border-radius:18px; border:2px solid var(--line); box-shadow:0 10px 30px rgba(0,0,0,.12); }
+.app ol{ font-size:38px; line-height:1.9; padding-left:56px; color:var(--navy); font-weight:700; }
+/* s12 */
+.ba{ display:grid; grid-template-columns:1fr 1fr; border-radius:24px; overflow:hidden; border:2px solid var(--line); }
+.ba > div{ padding:40px 50px; } .ba .b{ background:#eceef1; } .ba .a{ background:var(--teal-l); }
+.ba h3{ font-size:44px; margin-bottom:18px; } .ba ul{ font-size:34px; line-height:1.8; padding-left:40px; }
+.end{ text-align:center; font-size:60px; font-weight:800; color:var(--navy); margin-top:50px; }
+</style>
+</head>
+<body>
+
+<section class="scene" id="s1">
+  <span class="t-tag">SYSTEM OVERVIEW</span>
+  <h1>ガソリンカード<br>費用振替 自動化システム</h1>
+  <p class="t-sub">何のためのシステムかを、約3分で解説します</p>
+</section>
+
+<section class="scene" id="s2">
+  <div class="head"><span class="no">背景</span><h2>施設の車は、ガソリンカードで給油</h2></div>
+  <div class="body">
+    <div class="fac" data-s="0">
+      <div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div>
+      <div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div>
+      <div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div><div>🏠</div>
+    </div>
+    <div class="inv">
+      <div class="card" data-s="1" style="text-align:center"><div class="big">約200枚</div><p>ガソリンカード</p></div>
+      <div class="arrow" data-s="2">→</div>
+      <div class="paper" data-s="2">📄 請求書は<br>本部にまとめて1枚</div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="s3">
+  <div class="head"><span class="no">費用振替</span><h2>使った施設に、金額を振り分け直す</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="hq" data-s="0"><b>本部が支払い</b><span>346万円</span></div>
+      <div class="arrow" data-s="1">→</div>
+      <div class="dest" data-s="1">
+        <div><span>あおば苑</span><b>52,300円</b></div>
+        <div><span>さくら館</span><b>81,450円</b></div>
+        <div><span>ひかり荘</span><b>64,120円</b></div>
+        <div><span>…ほか27施設</span><b>…</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="s4">
+  <div class="head"><span class="no">現状</span><h2>毎月、担当者が手作業で</h2></div>
+  <div class="body">
+    <div class="row">
+      <div class="card" data-s="1" style="flex:1"><h3>① 照合</h3><p>カード番号から<br>施設を台帳で調べる</p></div>
+      <div class="card" data-s="1" style="flex:1"><h3>② 転記</h3><p>明細の金額を<br>1枚ずつ書き写す</p></div>
+      <div class="card" data-s="2" style="flex:1"><h3>③ 按分</h3><p>複数施設を担当する<br>AMの分を割り振る</p></div>
+      <div class="card" data-s="3" style="flex:1"><h3>④ CSV作成</h3><p>会計システム用の<br>ファイルを作る</p></div>
+    </div>
+    <div class="row" data-s="3" style="margin-top:40px">
+      <span class="chip e">時間がかかる</span><span class="chip e">転記ミス</span><span class="chip e">計算ミス</span>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="s5">
+  <div class="head"><span class="no">例</span><h2>佐藤さん（AM）のガソリン代 30,000円</h2></div>
+  <div class="body">
+    <table>
+      <tr><th>担当施設</th><th data-s="1">給与の負担割合</th><th data-s="2">ガソリン代</th></tr>
+      <tr><td>あおば苑</td><td class="n" data-s="1">50%</td><td class="n" data-s="2">15,000円</td></tr>
+      <tr><td>さくら館</td><td class="n" data-s="1">30%</td><td class="n" data-s="2">9,000円</td></tr>
+      <tr><td>ひかり荘</td><td class="n" data-s="1">20%</td><td class="n" data-s="2">6,000円</td></tr>
+      <tr class="total"><td>合計</td><td class="n" data-s="1">100%</td><td class="n" data-s="2">30,000円</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="scene" id="s6">
+  <div class="head"><span class="no">全体像</span><h2>3つを読み込んで、CSVを作る</h2></div>
+  <div class="body">
+    <div class="ipo">
+      <div class="stack" data-s="0"><div class="doc">📄 利用明細（PDF）</div><div class="doc">📗 管理台帳（Excel）</div><div class="doc">📗 給与按分資料（Excel）</div></div>
+      <div class="arrow" data-s="1">→</div>
+      <div class="engine" data-s="1">⚙ 自動処理<small>照合・集計・按分</small></div>
+      <div class="arrow" data-s="2">→</div>
+      <div class="stack" data-s="2"><div class="doc o">📤 費用振替CSV</div><div class="doc o">📊 集計一覧（Excel）</div><div class="doc o">⚠ エラー一覧（Excel）</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="s7">
+  <div class="head"><span class="no">しくみ</span><h2>処理は6つのステップ</h2></div>
+  <div class="body">
+    <div class="steps">
+      <div class="st" data-g="0"><span class="n">1</span><h3>台帳取込</h3><p>カード→施設・利用者</p></div>
+      <div class="st" data-g="0"><span class="n">2</span><h3>PDF読取</h3><p>金額を自動抽出・検算</p></div>
+      <div class="st" data-g="1"><span class="n">3</span><h3>照合</h3><p>カード番号で突き合わせ</p></div>
+      <div class="st" data-g="1"><span class="n">4</span><h3>按分</h3><p>AM等を施設別に分割</p></div>
+      <div class="st" data-g="2"><span class="n">5</span><h3>CSV作成</h3><p>会計システム用に出力</p></div>
+      <div class="st" data-g="2"><span class="n">6</span><h3>修正・再集計</h3><p>直したら自動でやり直し</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="s8">
+  <div class="head"><span class="no">役割分担</span><h2>人がやるのは「エラーの確認」だけ</h2></div>
+  <div class="body">
+    <div class="who">
+      <div class="card" data-s="0"><h3>🤖 システム</h3><ul><li>照合・転記・計算</li><li>按分・端数調整</li><li>CSV・Excel作成</li></ul></div>
+      <div class="card" data-s="1" style="border-color:var(--red);background:var(--red-l)"><h3>🧑‍💼 担当者</h3><ul><li>台帳にないカード</li><li>割合が100%にならない</li><li>読めない金額</li></ul></div>
+    </div>
+    <p data-s="2" style="text-align:center;font-size:36px;margin-top:36px;color:var(--navy);font-weight:700">画面で正しい値を入れる → 自動で再集計（元ファイルは書き換えない）</p>
+  </div>
+</section>
+
+<section class="scene" id="s9">
+  <div class="head"><span class="no">安全装置</span><h2>3つの合計が一致しないと、CSVを作らない</h2></div>
+  <div class="body">
+    <div class="eq" data-s="1">
+      <div class="t">請求書の合計<small>カード会社の請求額</small></div><div class="s">＝</div>
+      <div class="t">按分後の合計<small>施設に配った合計</small></div><div class="s">＝</div>
+      <div class="t">CSVの合計<small>会計に取り込む額</small></div>
+    </div>
+    <p data-s="1" style="text-align:center;margin-top:50px"><span class="chip ok">✓ 1円単位で一致を確認</span></p>
+  </div>
+</section>
+
+<section class="scene" id="s10">
+  <div class="head"><span class="no">AI</span><h2>読めない行は、AI（Claude）が補助</h2></div>
+  <div class="body">
+    <div class="ai">
+      <div class="mono" data-s="0">10/10 SS青葉台<br>レギュラー 41.15L<br><b style="color:var(--red)">¥ 7,0 37</b></div>
+      <div class="arrow" data-s="0">→</div>
+      <div class="claude" data-s="0">Claude</div>
+      <div class="arrow" data-s="2">→</div>
+      <div class="res" data-s="2">7,037円<br><span style="font-size:30px">小計と一致 ✓</span></div>
+    </div>
+    <div class="shield" data-s="1">
+      <span class="chip ok">🔒 送るのは読めない行の文字だけ</span><span class="chip ok">🔒 カード番号・名前は送らない</span>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="s11">
+  <div class="head"><span class="no">使い方</span><h2>操作は5ステップ</h2></div>
+  <div class="body">
+    <div class="app">
+      <img src="../../資料/img/app_main.png" alt="">
+      <ol>
+        <li data-s="0">ファイルを置く</li>
+        <li data-s="0">▶ 実行を押す</li>
+        <li data-s="1">エラーを直す</li>
+        <li data-s="1">合計の一致を確認</li>
+        <li data-s="1">CSVをダウンロード</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="s12">
+  <div class="head"><span class="no">まとめ</span><h2>手作業から、確認だけの仕事へ</h2></div>
+  <div class="body">
+    <div class="ba" data-s="0">
+      <div class="b"><h3>Before</h3><ul><li>200枚を手で照合・転記</li><li>按分を電卓で計算</li><li>合計確認は人まかせ</li></ul></div>
+      <div class="a"><h3>After</h3><ul><li>照合・転記・按分は自動</li><li>エラーだけ確認・修正</li><li>合計の不一致は自動で停止</li></ul></div>
+    </div>
+    <p class="end" data-s="1">正確に、速く。</p>
+  </div>
+</section>
+
+<div class="prog" id="prog"></div>
+<div class="cap" id="cap"></div>
+
+<script>
+// show(シーン番号, ステップ, 字幕, 進捗0-1)
+function show(scene, step, caption, progress){
+  document.querySelectorAll('.scene').forEach(s => s.classList.toggle('on', s.id === 's' + scene));
+  const sc = document.getElementById('s' + scene);
+  sc.querySelectorAll('[data-s]').forEach(el => el.classList.toggle('hide', +el.dataset.s > step));
+  sc.querySelectorAll('[data-g]').forEach(el => {
+    el.classList.toggle('dim', +el.dataset.g > step);
+    el.classList.toggle('hl', +el.dataset.g === step);
+  });
+  const cap = document.getElementById('cap');
+  cap.textContent = caption;
+  document.getElementById('prog').style.width = (progress * 100) + '%';
+}
+</script>
+</body>
+</html>

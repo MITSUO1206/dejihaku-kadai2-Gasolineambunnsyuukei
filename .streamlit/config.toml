@@ -1,0 +1,8 @@
+# 社内PCで使うときは start.bat から起動してください（このPCからしか開けない設定で起動します）
+# ※ クラウド（Streamlit Community Cloud）でも動くよう、待ち受けアドレスはここでは指定しません
+[server]
+headless = true
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false

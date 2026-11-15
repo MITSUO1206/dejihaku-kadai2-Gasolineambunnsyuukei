@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>操作・仕組み編スライド</title>
+<style>
+:root{ --ink:#1b2430; --sub:#5b6676; --line:#dfe3ea; --bg:#f4f6f9; --navy:#1f3a5f; --teal:#0f766e; --teal-l:#e3f3f0;
+  --amber:#b45309; --amber-l:#fdf1dc; --red:#b91c1c; --red-l:#fde8e8; --green:#15803d; --green-l:#e4f4e9; }
+*{ box-sizing:border-box; margin:0; }
+html,body{ width:1920px; height:1080px; overflow:hidden; background:var(--bg); color:var(--ink);
+  font-family:"BIZ UDPGothic","Noto Sans JP","Yu Gothic UI",sans-serif; }
+.scene{ position:absolute; inset:0; padding:80px 110px 220px; display:none; flex-direction:column; }
+.scene.on{ display:flex; }
+.head{ display:flex; align-items:center; gap:24px; margin-bottom:40px; }
+.head .no{ background:var(--navy); color:#fff; font-weight:700; font-size:26px; border-radius:12px; padding:8px 18px; }
+.head h2{ font-size:54px; color:var(--navy); }
+.body{ flex:1; display:flex; flex-direction:column; justify-content:center; }
+.hide{ opacity:0; }
+.row{ display:flex; gap:30px; align-items:stretch; justify-content:center; }
+.card{ background:#fff; border:2px solid var(--line); border-radius:22px; padding:28px 32px; box-shadow:0 6px 22px rgba(31,58,95,.07); }
+.card h3{ font-size:36px; color:var(--navy); margin-bottom:10px; }
+.card p, .card li{ font-size:29px; color:var(--sub); line-height:1.5; }
+.card ul{ padding-left:36px; }
+.card.red{ background:var(--red-l); border-color:#f3b9b9; } .card.amber{ background:var(--amber-l); border-color:#f0cf98; }
+.card.green{ background:var(--green-l); border-color:#b6dec3; } .card.teal{ background:var(--teal-l); border-color:#b3ddd6; }
+.arrow{ font-size:70px; color:var(--teal); font-weight:800; display:flex; align-items:center; justify-content:center; }
+.chip{ display:inline-block; border-radius:999px; padding:6px 22px; font-size:28px; font-weight:700; color:#fff; }
+.chip.e{ background:var(--red); } .chip.w{ background:var(--amber); } .chip.i{ background:#64748b; } .chip.ok{ background:var(--green); }
+.mono{ font-family:"BIZ UDGothic",monospace; }
+table{ border-collapse:collapse; font-size:34px; width:100%; background:#fff; }
+th,td{ padding:16px 24px; border-bottom:2px solid var(--line); text-align:left; }
+th{ background:var(--navy); color:#fff; } td.n{ text-align:right; font-variant-numeric:tabular-nums; }
+tr.hl td{ background:var(--teal-l); font-weight:800; } tr.old td{ color:#9aa3af; text-decoration:line-through; }
+.cap{ position:absolute; left:0; right:0; bottom:0; height:160px; background:rgba(20,32,48,.93); color:#fff;
+  display:flex; align-items:center; justify-content:center; padding:0 130px; text-align:center; font-size:42px; line-height:1.45; font-weight:700; }
+.prog{ position:absolute; left:0; bottom:160px; height:8px; background:var(--teal); }
+
+/* title */
+#t1{ background:linear-gradient(150deg,#1f3a5f 0%,#24527a 55%,#0f766e 100%); color:#fff; justify-content:center; }
+#t1 .tag{ font-size:30px; border:2px solid rgba(255,255,255,.5); border-radius:999px; padding:6px 24px; align-self:flex-start; }
+#t1 h1{ font-size:104px; line-height:1.2; margin:36px 0 26px; }
+#t1 p{ font-size:40px; opacity:.9; }
+/* pipeline */
+.pipe{ display:grid; grid-template-columns:repeat(5,1fr); gap:20px; }
+.pipe .st{ background:#fff; border:2px solid var(--line); border-radius:20px; padding:26px 16px; text-align:center; }
+.pipe .st b{ display:inline-flex; width:70px; height:70px; border-radius:50%; background:var(--teal); color:#fff; font-size:36px; align-items:center; justify-content:center; }
+.pipe .st h3{ font-size:32px; color:var(--navy); margin:14px 0 6px; } .pipe .st p{ font-size:24px; color:var(--sub); }
+.folder{ background:#fff; border:2px dashed var(--navy); border-radius:18px; padding:20px 28px; font-size:30px; font-weight:700; color:var(--navy); text-align:center; }
+.loop{ margin-top:26px; text-align:center; font-size:32px; color:var(--amber); font-weight:700; }
+/* regex */
+.code{ background:#0f172a; color:#e2e8f0; border-radius:18px; padding:26px 32px; font-size:32px; line-height:1.6; }
+.code .ok{ color:#86efac; } .code .ng{ color:#fca5a5; }
+.checks{ display:flex; gap:24px; justify-content:center; margin-top:30px; font-size:32px; font-weight:700; color:var(--navy); align-items:center; }
+.checks span.box{ background:#fff; border:3px solid var(--teal); border-radius:16px; padding:14px 22px; }
+/* match */
+.norm{ display:flex; align-items:center; gap:30px; justify-content:center; font-size:40px; margin-bottom:40px; }
+.norm .a{ background:#fff; border:2px solid var(--line); border-radius:14px; padding:14px 24px; }
+.norm .b{ background:var(--teal-l); border:2px solid var(--teal); border-radius:14px; padding:14px 24px; font-weight:800; }
+/* shot */
+#shot .frame{ flex:1; display:flex; align-items:center; justify-content:center; }
+#shot img{ max-width:100%; max-height:100%; border-radius:16px; border:2px solid var(--line); box-shadow:0 12px 40px rgba(0,0,0,.18); }
+#shot{ padding:44px 110px 196px; } #shot .head{ margin-bottom:22px; } #shot .head h2{ font-size:44px; }
+</style>
+</head>
+<body>
+
+<section class="scene" id="t1">
+  <span class="tag">HOW IT WORKS</span>
+  <h1>操作・仕組み編</h1>
+  <p>システムの中でどう動くか、エラーをどう扱うか、実際の操作まで</p>
+</section>
+
+<section class="scene" id="m2">
+  <div class="head"><span class="no">仕組み</span><h2>全体の流れ</h2></div>
+  <div class="body">
+    <div style="display:flex;flex-direction:column;gap:14px;align-items:stretch">
+      <div class="folder" data-s="0" style="align-self:center;min-width:760px">📁 入力フォルダ　<span style="font-size:26px;font-weight:400">利用明細PDF・管理台帳・給与按分資料</span></div>
+      <div class="arrow" data-s="1" style="font-size:50px">↓</div>
+      <div class="pipe" data-s="1">
+        <div class="st"><b>1</b><h3>台帳取込</h3><p>Excelを読む</p></div>
+        <div class="st"><b>2</b><h3>PDF読取</h3><p>金額を抜き出す</p></div>
+        <div class="st"><b>3</b><h3>照合</h3><p>カード番号で結ぶ</p></div>
+        <div class="st"><b>4</b><h3>按分</h3><p>施設に分ける</p></div>
+        <div class="st"><b>5</b><h3>出力</h3><p>CSV・Excelを作る</p></div>
+      </div>
+      <div class="arrow" data-s="1" style="font-size:50px">↓</div>
+      <div class="folder" data-s="1" style="align-self:center;min-width:760px">📁 出力フォルダ　<span style="font-size:26px;font-weight:400">費用振替CSV・集計Excel・エラーExcel</span></div>
+    </div>
+    <p class="loop" data-s="2">↺ 画面で直した内容は「修正ファイル」に保存され、実行のたびに1〜5に当て直される</p>
+  </div>
+</section>
+
+<section class="scene" id="m3">
+  <div class="head"><span class="no">① 台帳取込</span><h2>有効期間で「今月の行」を選ぶ</h2></div>
+  <div class="body">
+    <table data-s="0">
+      <tr><th>カード番号</th><th>施設</th><th>有効開始日</th><th>有効終了日</th></tr>
+      <tr class="old"><td class="mono">4980-…-0012</td><td>さくら館</td><td>2024/04/01</td><td>2026/09/30</td></tr>
+      <tr class="hl"><td class="mono">4980-…-0012</td><td>ひかり荘</td><td>2026/10/01</td><td>（空欄）</td></tr>
+    </table>
+    <div class="row" data-s="1" style="margin-top:40px">
+      <div class="card teal" style="flex:1"><h3>10月分を処理すると</h3><p>10月に有効な「ひかり荘」の行が自動で選ばれる</p></div>
+      <div class="card" style="flex:1"><h3>カードの変更は</h3><p>古い行に終了日を入れて、新しい行を足すだけ</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="m4">
+  <div class="head"><span class="no">② PDF読取</span><h2>ルールで読み、読めない行はAIへ、最後に検算</h2></div>
+  <div class="body">
+    <div class="code mono" data-s="0">
+      <div>カード番号 4980-2634-3517-5183 名義 ムラカミ マリ</div>
+      <div class="ok">10/04 SS中央通り 軽油 31.64L 4,714 　← ルールで読めた</div>
+      <div class="ng" data-s="1">10/10 SS青葉台 レギュラー 41.15L ¥ 7,0 37 　← 読めない → AIへ</div>
+      <div>カード小計 28,882</div>
+    </div>
+    <div class="checks" data-s="2">
+      <span class="box">明細の合計</span>＝<span class="box">カード小計</span>　かつ　<span class="box">全カード合計</span>＝<span class="box">請求合計</span>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="m5">
+  <div class="head"><span class="no">③ 照合</span><h2>カード番号で、明細と台帳を結びつける</h2></div>
+  <div class="body">
+    <div class="norm" data-s="0"><span class="a mono">４９８０－２６３４ 3517-5183</span><span class="arrow">→</span><span class="b mono">4980263435175183</span><span style="font-size:28px;color:var(--sub)">全角・ハイフンを揃える</span></div>
+    <div class="row" data-s="1">
+      <div class="card green" style="flex:1"><h3><span class="chip ok">OK</span></h3><p>台帳にあり、今月有効<br>→ 施設・利用者が決まる</p></div>
+      <div class="card red" style="flex:1"><h3><span class="chip e">エラー</span></h3><p>台帳にない／期間外<br>→ 施設が決まらない</p></div>
+      <div class="card amber" style="flex:1"><h3><span class="chip w">要確認</span></h3><p>名義がPDFと台帳で違う<br>→ 台帳が古いかも</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="m6">
+  <div class="head"><span class="no">④ 按分</span><h2>端数が出ても、合計は必ず一致（最大剰余法）</h2></div>
+  <div class="body">
+    <table>
+      <tr><th>按分先</th><th>割合</th><th data-s="0">金額×割合</th><th data-s="1">切り捨て</th><th data-s="2">端数を配る</th></tr>
+      <tr><td>あおば苑</td><td class="n">33.33%</td><td class="n" data-s="0">3,333.33</td><td class="n" data-s="1">3,333</td><td class="n" data-s="2">3,333</td></tr>
+      <tr><td>さくら館</td><td class="n">33.33%</td><td class="n" data-s="0">3,333.33</td><td class="n" data-s="1">3,333</td><td class="n" data-s="2">3,333</td></tr>
+      <tr><td>ひかり荘</td><td class="n">33.34%</td><td class="n" data-s="0">3,334.33</td><td class="n" data-s="1">3,334</td><td class="n" data-s="2"><b style="color:var(--teal)">3,335（+1）</b></td></tr>
+      <tr class="hl"><td>合計</td><td class="n">100%</td><td class="n" data-s="0">10,001</td><td class="n" data-s="1" style="color:var(--red)">10,000（1円不足）</td><td class="n" data-s="2">10,001 ✓</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="scene" id="m7">
+  <div class="head"><span class="no">⑤ 出力</span><h2>施設ごとに合計して、会計CSVの1行にする</h2></div>
+  <div class="body">
+    <table data-s="0" style="font-size:28px">
+      <tr><th>伝票日付</th><th>借方科目</th><th>借方部門</th><th>借方金額</th><th>貸方科目</th><th>貸方部門</th><th>摘要</th></tr>
+      <tr><td>2026/10/31</td><td>車両費</td><td>101 あおば苑</td><td class="n">52,300</td><td>車両費</td><td>000 本部</td><td>10月ガソリン あおば苑</td></tr>
+      <tr><td>2026/10/31</td><td>車両費</td><td>102 さくら館</td><td class="n">81,450</td><td>車両費</td><td>000 本部</td><td>10月ガソリン さくら館</td></tr>
+    </table>
+    <div class="row" data-s="1" style="margin-top:36px">
+      <div class="card" style="flex:1"><h3>直接分 ＋ 按分の受入分</h3><p>施設の車の分と、AM等から按分された分を合算</p></div>
+      <div class="card" style="flex:1"><h3>本部 → 施設へ付け替え</h3><p>貸方は本部、借方は各施設。会計ソフト向けの文字コードで出力</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="m8">
+  <div class="head"><span class="no">エラー処理 1</span><h2>見つけた問題を3つに分けて扱う</h2></div>
+  <div class="body">
+    <div class="row">
+      <div class="card red" style="flex:1" data-s="0"><h3><span class="chip e">エラー</span></h3><ul><li>そのカードは保留（按分しない）</li><li>CSVは出力しない</li><li>直すまで先に進めない</li></ul></div>
+      <div class="card amber" style="flex:1" data-s="1"><h3><span class="chip w">要確認</span></h3><ul><li>AIが読んだ行</li><li>名義の違い</li><li>出力は止めず、目で確認</li></ul></div>
+      <div class="card" style="flex:1" data-s="1"><h3><span class="chip i">情報</span></h3><ul><li>今月使われなかったカード</li><li>対応は不要</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="m9">
+  <div class="head"><span class="no">エラー処理 2</span><h2>想定外のことが起きても、安全側に倒す</h2></div>
+  <div class="body">
+    <table style="font-size:31px">
+      <tr><th style="width:38%">起きたこと</th><th>システムの動き</th></tr>
+      <tr data-s="0"><td>入力ファイルがない・列名が違う</td><td>処理を止めて、画面に理由を表示</td></tr>
+      <tr data-s="1"><td>AIが使えない（キーなし・通信断・90秒超え）</td><td>AIなしで続行。読めない行は手入力に回す</td></tr>
+      <tr data-s="1"><td>AIの読んだ金額が小計と合わない</td><td>採用しない（エラーのまま）</td></tr>
+      <tr data-s="2"><td>3つの合計が合わない</td><td>CSVを作らず、前に作った古いCSVも消す</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="scene" id="m10">
+  <div class="head"><span class="no">エラー処理 3</span><h2>直した内容は「修正ファイル」に残す</h2></div>
+  <div class="body">
+    <div class="row" style="align-items:center">
+      <div class="card" style="flex:1" data-s="0"><h3>📄 元のPDF・Excel</h3><p>一切書き換えない</p></div>
+      <div class="arrow" data-s="0">＋</div>
+      <div class="card teal" style="flex:1" data-s="0"><h3>📝 修正ファイル</h3><p>誰が・いつ・何を直したか</p></div>
+      <div class="arrow" data-s="1">→</div>
+      <div class="card green" style="flex:1" data-s="1"><h3>↺ 再集計</h3><p>実行のたびに当て直す<br>取消もできる</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" id="m11">
+  <div class="head"><span class="no">操作</span><h2>起動のしかた</h2></div>
+  <div class="body">
+    <div class="code mono" data-s="0" style="font-size:40px">&gt; .venv\Scripts\streamlit run app.py</div>
+    <p data-s="1" style="font-size:38px;text-align:center;margin-top:40px;color:var(--navy);font-weight:700">ブラウザで http://localhost:8501 を開く</p>
+  </div>
+</section>
+
+<section class="scene" id="shot">
+  <div class="head"><span class="no" id="shotTag">操作</span><h2 id="shotTitle"></h2></div>
+  <div class="frame"><img id="shotImg" src="" alt=""></div>
+</section>
+
+<section class="scene" id="e1">
+  <div class="head"><span class="no">まとめ</span><h2>操作は「置く・押す・直す・出す」</h2></div>
+  <div class="body">
+    <div class="row">
+      <div class="card" style="flex:1;text-align:center"><h3>① 置く</h3><p>3つのファイル</p></div>
+      <div class="card" style="flex:1;text-align:center"><h3>② 押す</h3><p>実行ボタン</p></div>
+      <div class="card red" style="flex:1;text-align:center"><h3>③ 直す</h3><p>エラーだけ</p></div>
+      <div class="card green" style="flex:1;text-align:center"><h3>④ 出す</h3><p>合計一致でCSV</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="prog" id="prog"></div>
+<div class="cap" id="cap"></div>
+<script>
+function show(id, step, caption, progress, img, tag, title){
+  document.querySelectorAll('.scene').forEach(s => s.classList.toggle('on', s.id === id));
+  const sc = document.getElementById(id);
+  sc.querySelectorAll('[data-s]').forEach(el => el.classList.toggle('hide', +el.dataset.s > step));
+  if (id === 'shot') {
+    document.getElementById('shotImg').src = img;
+    document.getElementById('shotTag').textContent = tag;
+    document.getElementById('shotTitle').textContent = title;
+  }
+  document.getElementById('cap').textContent = caption;
+  document.getElementById('prog').style.width = (progress * 100) + '%';
+}
+</script>
+</body>
+</html>

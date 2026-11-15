@@ -1,0 +1,6 @@
+# 個人情報・実データはリポジトリに入れない
+data/
+.venv/
+__pycache__/
+.pytest_cache/
+.env

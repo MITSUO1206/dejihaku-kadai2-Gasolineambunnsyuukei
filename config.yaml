@@ -1,0 +1,67 @@
+# ガソリンカード按分ツール 設定ファイル
+# 既存のExcel・CSVの列名や会計科目が変わった場合は、ここを修正してください。
+
+paths:
+  input_dir: data/input          # data/input/<対象月>/ に入力ファイルを置く
+  corrections_dir: data/corrections
+  output_dir: data/output
+  logs_dir: data/logs
+
+# 入力ファイル名（対象月フォルダ内）。* はワイルドカード
+input_files:
+  statement_pdf: "*.pdf"          # トヨタファイナンス利用明細
+  ledger_xlsx: "管理台帳*.xlsx"     # ガソリンカード管理台帳
+  allocation_xlsx: "給与按分*.xlsx" # 給与按分資料
+
+# ① 管理台帳（Excel）の列対応
+ledger:
+  sheet: カード台帳
+  facility_sheet: 施設マスタ
+  columns:
+    card_no: カード番号
+    facility_code: 施設コード
+    facility_name: 施設名
+    category: 区分            # 施設 / AM / アドバイザー
+    employee_no: 社員番号
+    user_name: 利用者
+    card_holder: カード名義
+    valid_from: 有効開始日
+    valid_to: 有効終了日
+  facility_columns:
+    facility_code: 施設コード
+    facility_name: 施設名
+    dept_code: 部門コード
+  # この区分の利用分は給与按分資料で施設別に按分する
+  allocation_categories: [AM, アドバイザー]
+
+# ③ 給与按分資料（Excel）の列対応
+allocation:
+  sheet: 按分
+  columns:
+    month: 対象月
+    employee_no: 社員番号
+    employee_name: 氏名
+    facility_code: 按分先施設コード
+    ratio: 按分割合      # % 表記（合計100）
+  # 端数処理：largest_remainder（最大剰余法：合計が必ず元金額と一致）
+  rounding: largest_remainder
+
+# ⑤ 費用振替CSV（会計システム取込形式）
+journal:
+  encoding: cp932          # Shift_JIS（会計ソフトの多くが要求）
+  date_rule: month_end     # 伝票日付 = 対象月の末日
+  debit_account_code: "7410"
+  debit_account_name: 車両費
+  credit_account_code: "7410"
+  credit_account_name: 車両費
+  credit_dept_code: "000"  # 本部（カード代金の支払部門）
+  summary_format: "{month}ガソリンカード費用振替 {facility_name}"
+  columns: [伝票日付, 伝票番号, 行番号, 借方勘定科目コード, 借方勘定科目名, 借方部門コード, 借方金額,
+            貸方勘定科目コード, 貸方勘定科目名, 貸方部門コード, 貸方金額, 摘要]
+
+# ② AIによるPDF読取補助（Claude API）
+ai:
+  enabled: true            # false にするとAIを一切使わない
+  model: claude-opus-5-5
+  # ルールで読めなかった行だけをAIに送る。送信内容は data/logs に記録する
+  max_lines_per_request: 50
