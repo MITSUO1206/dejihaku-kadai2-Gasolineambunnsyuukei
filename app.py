@@ -183,7 +183,13 @@ def workspace_cfg() -> dict:
         return cfg
     import copy
     import shutil
-    sid = st.session_state.setdefault("sid", _secrets.token_hex(8))
+    # 作業フォルダの番号をURLに持たせ、再読み込みしても同じ作業フォルダ（置いたファイル・直した内容）を使えるようにする
+    sid = st.session_state.get("sid") or st.query_params.get("w", "")
+    if not re.fullmatch(r"[0-9a-f]{16}", sid):
+        sid = _secrets.token_hex(8)
+    st.session_state.sid = sid
+    if st.query_params.get("w") != sid:
+        st.query_params["w"] = sid
     base = ROOT / "data" / "demo_sessions"
     if not st.session_state.get("demo_cleaned"):  # 1日以上前の作業フォルダを消す
         cutoff = datetime.now().timestamp() - 86400
@@ -240,6 +246,9 @@ def page_aggregate(user: dict) -> None:
     present = {k: sorted(in_dir.glob(f"{v[2]}*.{v[1]}")) for k, v in UPLOAD_KINDS.items()} if in_dir.exists() else \
         {k: [] for k in UPLOAD_KINDS}
     files_ok = all(present.values())
+    # ファイル名に入っている年月（例：利用明細_202610.pdf）が対象月と違えば、取り違えとして警告する
+    other_month = sorted({f"{m.group(1)}-{m.group(2)}" for fs in present.values() for f in fs[-1:]
+                          for m in [re.search(r"(20\d{2})(0[1-9]|1[0-2])", f.name)] if m} - {month})
     res = st.session_state.get("res")
     if res is not None and res.month != month:
         res = None
@@ -268,6 +277,11 @@ def page_aggregate(user: dict) -> None:
     stepper(current, done)
     st.write("")
 
+    if other_month:
+        st.error(f"⚠ 置いてあるファイルは **{'・'.join(month_label(x) for x in other_month)}分** のようです。"
+                 f"対象月は **{month_label(month)}** です。月が合っているか確認してください。"
+                 "（違っていれば、上で対象月を選び直すか、正しい月のファイルを置き直してください）")
+
     # ---- ① ファイルを置く ----
     with st.container(border=True):
         if files_ok:  # 終わった手順は1行に縮めて、今の手順を画面の上に出す
@@ -295,9 +309,11 @@ def page_aggregate(user: dict) -> None:
                 problems = []
                 for k, f in ups.items():
                     if f and not f.getvalue().startswith(UPLOAD_KINDS[k][3]):
-                        problems.append(f"「{f.name}」は{UPLOAD_KINDS[k][0]}のファイルではありません")
+                        v = UPLOAD_KINDS[k]
+                        problems.append(f"「{f.name}」は{v[0]}のファイルではありません。"
+                                        f"{v[4]}（例：{v[2]}{month.replace('-', '')}.{v[1]}）を選び直してください")
                 if problems:
-                    st.error("保存しませんでした：" + "／".join(problems))
+                    st.error("保存しませんでした。\n\n" + "\n\n".join(problems))
                 else:
                     in_dir.mkdir(parents=True, exist_ok=True)
                     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -357,29 +373,40 @@ def page_aggregate(user: dict) -> None:
     fac_label = dict(zip(fac["facility_code"], fac["facility_name"]))
 
     # ---- ③ エラーを直す ----
+    # 先月この画面で確定した内容（「先月は○○でした」のヒントに使う。自動では入れない）
+    y, m_ = map(int, month.split("-"))
+    prev = f"{y - 1}-12" if m_ == 1 else f"{y}-{m_ - 1:02d}"
+    prev_corr = load_corrections(cfg, prev) if (ROOT / cfg["paths"]["corrections_dir"] / f"{prev}.json").exists() else None
+    fac_opt = [f"{c} {fac_label[c]}" for c in fac_codes]  # 表示は「コード 施設名」
+
     with st.container(border=True):
         st.subheader("3. エラーを直す")
         if not errors:
             st.success("直す必要があるエラーはありません。")
         else:
             held = res.totals["エラーで保留中の金額"]
-            st.warning(f"直す必要があるエラーが **{len(errors)}件** あります（この分の ¥{held:,} はまだCSVに入っていません）。"
-                       "上から順に直してください。「確定」を押すと、自動で集計し直します。")
+            st.warning(f"直す必要があるエラーが **残り{len(errors)}件** あります（この分の ¥{held:,} はまだCSVに入っていません）。"
+                       "1件ずつ直して「確定」を押すと、自動で集計し直し、直したものはこの一覧から消えます。")
         seen_emp: set[str] = set()
-        for n, iss in enumerate(errors):
+        for iss in errors:
             if iss.code in ALLOC_FIX:
                 emp = iss.ref.get("employee_no", "")
                 if emp in seen_emp:
                     continue
                 seen_emp.add(emp)
+            # 入力欄はエラーの中身（コード＋カード番号／社員番号）で区別する。
+            # 並び順の番号で区別すると、1件直した後に、前の入力が次のエラーの欄に残ってしまう
+            uid = f"{iss.code}_{iss.card_no or iss.ref.get('employee_no', '')}"
             title, todo = PLAIN.get(iss.code, (iss.title, iss.action))
             with st.container(border=True):
-                st.markdown(f"**{n + 1}. {title}**")
+                st.markdown(f"**{title}**")
                 facts = []
                 if iss.card_no:
                     facts.append(f"カード {format_card_no(iss.card_no)}")
                 if iss.user:
                     facts.append(f"利用者・名義 {iss.user}")
+                if iss.facility:
+                    facts.append(f"台帳での施設 {iss.facility}")
                 if iss.amount is not None:
                     facts.append(f"金額 ¥{iss.amount:,}")
                 st.caption("　／　".join(facts + [f"詳しく：{iss.detail}", f"コード {iss.code}"]))
@@ -388,23 +415,30 @@ def page_aggregate(user: dict) -> None:
                 if iss.code in AMOUNT_FIX:
                     default = iss.ref.get("subtotal") or iss.ref.get("read_sum") or 0
                     amt = st.number_input("このカードの今月の利用金額（円）", value=int(default), step=1, min_value=0,
-                                          key=f"amt{n}", help="明細PDFの「カード小計」の金額を入れてください")
-                    if st.button("この金額で確定", key=f"b{n}", type="primary"):
+                                          key=f"amt_{uid}", help="明細PDFの「カード小計」の金額を入れてください")
+                    if st.button("この金額で確定", key=f"b_{uid}", type="primary"):
                         save_correction(cfg, month, "pdf_overrides", iss.card_no, {"amount": int(amt)}, who,
                                         f"{iss.code}: {iss.detail}")
                         rerun_after_save("金額を確定しました")
 
                 elif iss.code in CARD_FIX:
+                    hint = prev_corr["card_overrides"].get(iss.card_no) if prev_corr else None
+                    if hint:
+                        st.caption(f"💡 先月はこのカードを「{hint['facility_code']} {fac_label.get(hint['facility_code'], '')}」"
+                                   f"（{hint['category']}）で確定しています。")
+                    st.caption("どの施設か分からないときは、カードの管理者に確認してから選んでください。")
                     a, b_, c = st.columns(3)
-                    f_sel = a.selectbox("使った施設", [None] + fac_codes, key=f"f{n}",
+                    f_sel = a.selectbox("使った施設", [None] + fac_codes, key=f"f_{uid}",
                                         format_func=lambda x: "選んでください" if x is None else f"{x} {fac_label[x]}")
-                    cat = b_.selectbox("区分", ["施設", "AM", "アドバイザー"], key=f"c{n}",
+                    cat = b_.selectbox("区分", ["施設", "AM", "アドバイザー"], key=f"c_{uid}",
                                        help="施設の車なら「施設」。複数施設を担当する人のカードなら「AM」「アドバイザー」")
-                    emp = c.text_input("社員番号（AM・アドバイザーのとき）", key=f"e{n}")
+                    emp = c.text_input("社員番号（AM・アドバイザーのとき）", key=f"e_{uid}")
                     need_emp = cat != "施設" and not emp.strip()
-                    if need_emp:
-                        st.caption("AM・アドバイザーの場合は社員番号を入れてください。")
-                    if st.button("この内容で確定", key=f"b{n}", type="primary", disabled=f_sel is None or need_emp):
+                    if f_sel is None:
+                        st.caption("使った施設を選ぶと、確定できます。")
+                    elif need_emp:
+                        st.caption("AM・アドバイザーの場合は、社員番号を入れると確定できます。")
+                    if st.button("この内容で確定", key=f"b_{uid}", type="primary", disabled=f_sel is None or need_emp):
                         save_correction(cfg, month, "card_overrides", iss.card_no, {
                             "facility_code": f_sel, "category": cat, "employee_no": emp.strip(),
                             "user_name": iss.user, "card_holder": iss.ref.get("holder", "")}, who,
@@ -413,20 +447,33 @@ def page_aggregate(user: dict) -> None:
 
                 elif iss.code in ALLOC_FIX:
                     emp = iss.ref.get("employee_no", "")
-                    plan = pd.DataFrame(iss.ref.get("plan") or [{"facility_code": None, "ratio": 100.0}])
-                    st.caption("行を追加・削除できます。施設を選び、割合（%）を入れてください。")
+                    hint = prev_corr["alloc_overrides"].get(emp) if prev_corr else None
+                    if hint:
+                        st.caption("💡 先月は " + "、".join(f"{h['facility_code']} {fac_label.get(h['facility_code'], '')} "
+                                                          f"{h['ratio']:g}%" for h in hint) + " で確定しています。")
+                    rows = iss.ref.get("plan") or [{"facility_code": None, "ratio": 100.0}]
+                    plan = pd.DataFrame([{"施設": (f"{r['facility_code']} {fac_label.get(r['facility_code'], '')}"
+                                                  if r.get("facility_code") else None),
+                                          "割合": float(r["ratio"])} for r in rows])
+                    st.caption("施設の欄をクリックして選び、割合（%）を入れてください。行は追加・削除できます。")
                     edited = st.data_editor(
-                        plan, num_rows="dynamic", key=f"pl{n}", width="stretch",
+                        plan, num_rows="dynamic", key=f"pl_{uid}", width="stretch", hide_index=True,
                         column_config={
-                            "facility_code": st.column_config.SelectboxColumn(
-                                "按分先の施設", options=fac_codes, required=True),
-                            "ratio": st.column_config.NumberColumn("割合（%）", min_value=0, max_value=100, required=True)})
-                    total = float(edited["ratio"].fillna(0).sum())
-                    ok = abs(total - 100) < 1e-6 and edited["facility_code"].notna().all() and len(edited) > 0
-                    (st.success if ok else st.info)(f"いまの合計：{total:g}%" + ("" if ok else "　（100%にすると確定できます）"))
-                    if st.button("この割合で確定", key=f"b{n}", type="primary", disabled=not ok):
-                        save_correction(cfg, month, "alloc_overrides", emp, edited.dropna().to_dict("records"), who,
-                                        f"{iss.code}: {iss.detail}")
+                            "施設": st.column_config.SelectboxColumn("按分先の施設", options=fac_opt, required=True),
+                            "割合": st.column_config.NumberColumn("割合（%）", min_value=0, max_value=100, required=True)})
+                    total = float(edited["割合"].fillna(0).sum())
+                    no_fac = edited["施設"].isna().any() or len(edited) == 0
+                    ok = abs(total - 100) < 1e-6 and not no_fac
+                    if ok:
+                        st.success(f"いまの合計：{total:g}%　確定できます。")
+                    elif no_fac:
+                        st.info(f"いまの合計：{total:g}%　按分先の施設が空いている行があります。施設を選んでください。")
+                    else:
+                        st.info(f"いまの合計：{total:g}%　合計が100%になるように割合を直してください。")
+                    if st.button("この割合で確定", key=f"b_{uid}", type="primary", disabled=not ok):
+                        recs = [{"facility_code": r["施設"].split(" ")[0], "ratio": float(r["割合"])}
+                                for _, r in edited.iterrows()]
+                        save_correction(cfg, month, "alloc_overrides", emp, recs, who, f"{iss.code}: {iss.detail}")
                         rerun_after_save("按分の割合を確定しました")
                 else:
                     st.caption("この画面では直せないエラーです。")
@@ -451,7 +498,8 @@ def page_aggregate(user: dict) -> None:
                     elif kind == "card_overrides":
                         desc = f"カード {format_card_no(key)} → {val['facility_code']} {fac_label.get(val['facility_code'], '')}（{val['category']}）"
                     else:
-                        desc = f"社員番号 {key} → " + "、".join(f"{p['facility_code']} {p['ratio']:g}%" for p in val)
+                        desc = f"社員番号 {key} → " + "、".join(
+                            f"{p['facility_code']} {fac_label.get(p['facility_code'], '')} {p['ratio']:g}%" for p in val)
                     a.markdown(f"{kind_label[kind]}：{desc}")
                     if b_.button("取り消す", key=f"del{kind}{key}"):
                         save_correction(cfg, month, kind, key, None, who, "取消")
@@ -477,6 +525,14 @@ def page_aggregate(user: dict) -> None:
                                         on_click=db.log, args=(user["username"], "ダウンロード", f"{month} {p.name}"))
             with st.expander("CSVの中身を見る"):
                 st.dataframe(res.journal, width="stretch", hide_index=True)
+            # 出したかどうかを画面に残す（出し忘れ・二重の取り込みを防ぐ）
+            dl = [r for r in db.recent_logs(200, action="ダウンロード")
+                  if r["detail"].startswith(month) and "費用振替" in r["detail"]]
+            if dl:
+                st.caption(f"📌 この月の費用振替CSVは {dl[0]['ts'].replace('T', ' ')[:16]} に {dl[0]['username']} さんが"
+                           f"ダウンロードしています（全{len(dl)}回）。会計システムへの二重の取り込みに注意してください。")
+            else:
+                st.caption("📌 この月の費用振替CSVは、まだダウンロードされていません。")
         else:
             st.info(f"あと **{n_err}件** のエラーを直すと、ここに「CSVをダウンロード」ボタンが出ます。"
                     "（間違った金額が会計に入らないよう、エラーが残っている間はCSVを作りません）")
@@ -494,41 +550,52 @@ def page_aggregate(user: dict) -> None:
 # =============================================================================
 # 月次推移ページ（全員）
 # =============================================================================
-def page_trend() -> None:
+def page_trend(user: dict) -> None:
     st.title("月次推移")
-    st.caption("CSVを出力できた（エラー0件・合計一致の）月の、施設別の確定金額を集計しています。")
+    st.caption("エラーを0件にしてCSVを出せた月の、施設ごとのガソリン代を集計しています。")
     total = reports.monthly_total()
     if total.empty:
-        st.info("まだデータがありません。集計ページでエラーを0件にしてCSVを出力すると、ここに月ごとの結果がたまります。")
+        st.info("まだデータがありません。「集計」でエラーを0件にしてCSVを出せる状態にすると、ここに月ごとの結果がたまります。")
         return
+    # 画面では、専門用語を言い換え、月は「2026年10月」の書き方にそろえる
+    words = {"直接利用": "施設の車で使った分", "按分受入": "AM等から分けられた分", "対象月": "月"}
+
+    def show(df):
+        df = df.copy()
+        if "対象月" in df:
+            df["対象月"] = df["対象月"].map(month_label)
+        return df.rename(columns=words)
 
     st.subheader("月ごとの合計")
-    st.bar_chart(total.set_index("対象月")[["直接利用", "按分受入"]], stack=True)
-    st.dataframe(total.style.format({c: "{:,}" for c in ["直接利用", "按分受入", "合計"]}),
+    chart = show(total).set_index("月")[["施設の車で使った分", "AM等から分けられた分"]]
+    st.bar_chart(chart, stack=True)
+    st.dataframe(show(total).style.format({c: "{:,}" for c in ["施設の車で使った分", "AM等から分けられた分", "合計"]}),
                  width="stretch", hide_index=True)
 
-    st.subheader("施設別ランキング")
-    m = st.selectbox("対象月", reports.months())
+    st.subheader("施設ごとのランキング")
+    m = st.selectbox("月を選ぶ", reports.months(), format_func=month_label)
     rk = reports.ranking(m)
-    st.dataframe(rk.style.format({"直接利用": "{:,}", "按分受入": "{:,}", "合計": "{:,}", "構成比": "{:.1f}%"}),
-                 width="stretch", hide_index=True)
+    st.dataframe(show(rk).rename(columns={"構成比": "全体に占める割合"}).style.format(
+        {"施設の車で使った分": "{:,}", "AM等から分けられた分": "{:,}", "合計": "{:,}", "全体に占める割合": "{:.1f}%"}),
+        width="stretch", hide_index=True)
 
-    st.subheader("施設別の推移")
+    st.subheader("施設ごとの推移")
     tr = reports.facility_trend()
     names = sorted(tr["施設名"].unique())
-    pick = st.multiselect("施設を選ぶ", names, default=list(rk["施設名"].head(5)))
+    pick = st.multiselect("施設を選ぶ（複数選べます）", names, default=list(rk["施設名"].head(5)))
     if pick:
-        pv = tr[tr["施設名"].isin(pick)].pivot(index="対象月", columns="施設名", values="金額")
-        st.line_chart(pv)
-        st.dataframe(tr[tr["施設名"].isin(pick)].style.format({"金額": "{:,}", "前月差": "{:+,.0f}"}, na_rep="—"),
-                     width="stretch", hide_index=True)
+        sub = show(tr[tr["施設名"].isin(pick)])
+        st.line_chart(sub.pivot(index="月", columns="施設名", values="金額"))
+        st.dataframe(sub.rename(columns={"前月差": "先月との差"}).style.format(
+            {"金額": "{:,}", "先月との差": "{:+,.0f}"}, na_rep="—"), width="stretch", hide_index=True)
 
-    with st.expander("実行の記録"):
+    with st.expander("集計した記録（いつ・誰が実行したか）"):
         st.dataframe(reports.runs(), width="stretch", hide_index=True)
-    with st.expander("この画面で使っているSQL"):
-        st.code(reports.SQL_MONTHLY_TOTAL.strip(), language="sql")
-        st.code(reports.SQL_RANKING.strip(), language="sql")
-        st.code(reports.SQL_FACILITY_TREND.strip(), language="sql")
+    if user["role"] == "admin":  # 技術的な情報は管理者にだけ見せる
+        with st.expander("（管理者向け）この画面で使っているSQL"):
+            st.code(reports.SQL_MONTHLY_TOTAL.strip(), language="sql")
+            st.code(reports.SQL_RANKING.strip(), language="sql")
+            st.code(reports.SQL_FACILITY_TREND.strip(), language="sql")
 
 
 # =============================================================================
@@ -610,7 +677,11 @@ def page_admin(me: dict) -> None:
                                                   format_func=lambda o, d=d: d["options"][o], help=d.get("help"))
                 else:
                     vals[d["key"]] = st.text_input(label, value=str(cur), help=d.get("help"))
-            if st.form_submit_button("保存する", type="primary"):
+            agree = st.checkbox("変更すると、これから作る費用振替CSVの内容が変わることを確認しました")
+            if st.form_submit_button("変更を保存する", type="primary"):
+                if not agree:
+                    st.warning("保存していません。内容を確認して、上のチェックを入れてから「変更を保存する」を押してください。")
+                    st.stop()
                 try:
                     changed = []
                     for k, v in vals.items():
@@ -633,7 +704,7 @@ def page_admin(me: dict) -> None:
                 db.delete_setting(k)
             db.log(me["username"], "設定変更", "すべて初期値に戻す")
             st.rerun()
-        with st.expander("初期値（config.yaml）"):
+        with st.expander("初期値（最初の設定）"):
             st.table(pd.DataFrame([{"項目": d["label"], "初期値": str(settings.current(base, d["key"]))}
                                    for d in settings.DEFS]))
 
@@ -671,10 +742,12 @@ with st.sidebar:
         st.rerun()
     with cols[1].popover("PW変更", width="stretch"):
         form_change_password(user, forced=False)
+    st.caption("※ ブラウザで再読み込みすると、ログイン画面に戻ります。置いたファイルや直した内容は保存されているので、"
+               "もう一度ログインすれば続きからできます。")
 
 if page == "集計":
     page_aggregate(user)
 elif page == "月次推移":
-    page_trend()
+    page_trend(user)
 elif page == "管理":
     page_admin(user)
